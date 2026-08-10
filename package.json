@@ -8,7 +8,8 @@
     "start": "electron .",
     "postinstall": "npm run rebuild:native",
     "rebuild:native": "electron-rebuild -f -w node-pty --arch=arm64",
-    "test:smoke": "EDEX_SMOKE_TEST=1 electron ."
+    "test:smoke": "EDEX_SMOKE_TEST=1 electron .",
+    "test:visual": "EDEX_VISUAL_TEST=1 electron ."
   },
   "engines": {
     "node": ">=22"

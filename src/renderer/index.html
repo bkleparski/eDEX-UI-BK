@@ -6,12 +6,85 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>eDEX-UI-BK</title>
     <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+    <link rel="stylesheet" href="theme-tokens.css">
     <link rel="stylesheet" href="styles.css">
   </head>
-  <body>
-    <main class="terminal-shell" aria-label="Terminal zsh">
-      <div id="terminal"></div>
-    </main>
+  <body class="booting">
+    <div class="app-shell" id="appShell">
+      <header class="top-hud panel hud-frame boot-frame">
+        <div class="top-hud__content boot-content boot-content--top">
+          <div class="brand-lockup">
+            <span class="hud-title">eDEX-UI BK</span>
+            <span class="hud-label">GRID TERMINAL</span>
+          </div>
+          <div class="hud-coordinate hud-label" aria-hidden="true">LOCAL SHELL / ZSH</div>
+          <div class="shell-status hud-label" id="shellStatus" data-state="starting">
+            <span class="status-beacon" aria-hidden="true"></span>
+            <span id="shellStatusText">LINK STARTING</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="side-panel panel hud-frame boot-frame" aria-labelledby="systemPanelTitle">
+          <div class="panel-content boot-content boot-content--left">
+            <header class="panel-heading">
+              <h2 class="hud-title" id="systemPanelTitle">SYSTEM</h2>
+              <span class="hud-label">TELEMETRY</span>
+            </header>
+            <div class="panel-placeholder hud-label">
+              <span class="placeholder-mark" aria-hidden="true"></span>
+              <span>MONITORING MODULE RESERVED</span>
+            </div>
+          </div>
+        </aside>
+
+        <section class="terminal-panel panel hud-frame boot-frame" aria-labelledby="terminalPanelTitle">
+          <div class="terminal-heading boot-content boot-content--terminal">
+            <h1 class="hud-title" id="terminalPanelTitle">COMMAND GRID</h1>
+            <span class="hud-label">INTERACTIVE ZSH</span>
+          </div>
+          <div class="terminal-surface boot-content boot-content--terminal">
+            <div id="terminal" aria-label="Terminal zsh"></div>
+          </div>
+        </section>
+
+        <aside class="side-panel panel hud-frame boot-frame" aria-labelledby="networkPanelTitle">
+          <div class="panel-content boot-content boot-content--right">
+            <header class="panel-heading">
+              <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
+              <span class="hud-label">STORAGE / TASKS</span>
+            </header>
+            <div class="panel-placeholder hud-label">
+              <span class="placeholder-mark" aria-hidden="true"></span>
+              <span>DATA MODULE RESERVED</span>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="bottom-hud panel hud-frame boot-frame">
+        <div class="bottom-hud__content boot-content boot-content--bottom">
+          <span class="hud-label">INPUT ROUTE / LOCAL PTY</span>
+          <button class="hud-control hud-label" id="scanlinesToggle" type="button">
+            SCANLINES <span id="scanlinesState">OFF</span>
+            <span class="control-shortcut">CMD SHIFT L</span>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="scanlines" aria-hidden="true"></div>
+
+    <div class="boot-overlay" id="bootOverlay" role="status" aria-label="Uruchamianie interfejsu GRID">
+      <div class="boot-line" aria-hidden="true"></div>
+      <div class="boot-copy">
+        <span class="hud-title">INITIALIZING GRID</span>
+        <button class="boot-skip hud-label" id="skipBootAlways" type="button">SKIP INTRO NEXT TIME</button>
+      </div>
+    </div>
+
     <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="renderer.js"></script>

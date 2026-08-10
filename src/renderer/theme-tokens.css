@@ -1,0 +1,232 @@
+/* ==========================================================================
+   eDEX-UI-BK — theme tokens (Faza 1: Tron / GRID)
+   Punkt startowy dla Codexa: zmienne + referencyjne klasy użycia.
+
+   Zalozenia (z konsultacji wizualnej):
+   - glow tylko na elementach HUD (DOM). NIE na tekscie terminala —
+     xterm.js 5.x renderuje na canvas, text-shadow tam nie zadziala.
+     Terminal: ostry cyjan na ciemnym tle, glow maja ramki i naglowki.
+   - animowane wylacznie opacity i transform (pelnoekranowe animacje
+     box-shadow w Electronie zabija plynnosc).
+   - fonty bundlowane lokalnie w assets/fonts (@font-face w styles.css),
+     zadnego CDN — apka ma dzialac offline.
+   ========================================================================== */
+
+:root {
+  /* --- Paleta bazowa (SPEC.md) --- */
+  --bg-black:    #000000;
+  --bg-grid:     #02080a;
+  --cyan:        #00e5ff;
+  --cyan-bright: #8ff8ff;
+  --cyan-dim:    #087f9c;
+  --amber:       #ff9f1c;   /* akcent ostrzegawczy (recognizers) */
+
+  /* Triplety RGB do skladania przezroczystosci: rgb(var(--cyan-rgb) / .35) */
+  --cyan-rgb:        0 229 255;
+  --cyan-bright-rgb: 143 248 255;
+  --cyan-dim-rgb:    8 127 156;
+  --amber-rgb:       255 159 28;
+
+  /* --- Tekst --- */
+  --text-primary:   var(--cyan);
+  --text-bright:    var(--cyan-bright);
+  --text-secondary: var(--cyan-dim);
+  --text-warning:   var(--amber);
+
+  /* --- Glow tekstu (tylko HUD/DOM) ---
+     Technika "tight + wide": ciasny jasny rdzen + szeroki slaby ambient.
+     Max 3 warstwy, nigdy bial w rdzeniu (bial tylko dla stanu "hot"). */
+  --glow-title:
+    0 0 3px  rgb(var(--cyan-bright-rgb) / .80),
+    0 0 12px rgb(var(--cyan-rgb) / .35),
+    0 0 30px rgb(var(--cyan-rgb) / .15);
+  --glow-label: 0 0 6px rgb(var(--cyan-dim-rgb) / .40);
+  --glow-warning:
+    0 0 3px  rgb(var(--amber-rgb) / .80),
+    0 0 14px rgb(var(--amber-rgb) / .30);
+
+  /* --- Ramki paneli ---
+     outset + inset naraz = efekt neonowej rurki, nie rozmazanej plamy. */
+  --panel-border: 1px solid rgb(var(--cyan-rgb) / .35);
+  --panel-glow:
+    0 0 8px rgb(var(--cyan-rgb) / .25),
+    inset 0 0 8px rgb(var(--cyan-rgb) / .08);
+  --panel-bg: rgb(var(--cyan-dim-rgb) / .05);
+
+  /* --- HUD corner brackets ---
+     Rogi celowo grubsze (2px) i pelny cyjan; ramka cienka (1px) i przygaszona.
+     Ten kontrast grubosci to motyw z GRID. */
+  --bracket-size:  14px;
+  --bracket-width: 2px;
+  --bracket-color: var(--cyan);
+  --bracket-glow:  drop-shadow(0 0 4px rgb(var(--cyan-rgb) / .5));
+
+  /* --- Fonty ---
+     Pliki do pobrania do src/renderer/assets/fonts/:
+     - Monaspace Neon NF (Nerd Fonts) — terminal, glyphy promptow
+     - Orbitron 600/800 — tylko krotkie naglowki HUD, uppercase
+     - Chakra Petch 500/600 — drobne etykiety i liczby (Orbitron < 12px
+       jest nieczytelny, dlatego drugi font HUD)
+     xterm.js: ustawic TA SAMA rodzine w opcji fontFamily i iniciowac
+     terminal dopiero po document.fonts.ready — inaczej zle policzy
+     szerokosci znakow. */
+  --font-terminal:  "Monaspace Neon NF", "SF Mono", Menlo, monospace;
+  --font-hud:       "Orbitron", "Arial Black", sans-serif;
+  --font-hud-label: "Chakra Petch", "Rajdhani", Verdana, sans-serif;
+  --hud-title-spacing: 0.2em;
+
+  /* --- Overlaye CRT ---
+     Scanlines STATYCZNE (animowane mecza oczy i ciagna repaint).
+     Domyslnie WYL (przelacznik wg SPEC). Vignette daje 80% klimatu
+     CRT bez kosztu czytelnosci — moze byc WLACZONE domyslnie. */
+  --scanlines-bg: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    rgb(0 0 0 / .05) 3px
+  );
+  --vignette-bg: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgb(0 0 0 / .35) 100%
+  );
+  --z-vignette:  9998;
+  --z-scanlines: 9999;
+
+  /* --- Animacje --- */
+  --dur-fast:  150ms;
+  --dur-med:   250ms;
+  --ease-out:  cubic-bezier(.2, .7, .3, 1);
+
+  /* Boot/intro: twardy limit 1.5s, pomijalny dowolnym klawiszem,
+     ustawienie "skip boot" w configu. */
+  --boot-total:   1500ms;
+  --boot-line:    250ms;   /* faza 1: linia scaleX 0 -> 1 */
+  --boot-flicker: 350ms;   /* faza 2: flicker neonu na ramkach */
+  --boot-stagger: 100ms;   /* faza 3: opoznienie miedzy panelami */
+}
+
+/* --- Keyframes (nie moga byc w zmiennych) --- */
+
+/* Charakterystyczny "start neonu" — 2-3 szybkie migniecia i stabilizacja */
+@keyframes neon-flicker {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  20%  { opacity: 0.2; }
+  35%  { opacity: 1; }
+  50%  { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* Faza 1 boot: pozioma linia cyjanu przez srodek ekranu */
+@keyframes boot-line {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ==========================================================================
+   REFERENCYJNE KLASY UZYCIA (Codex moze przeniesc/dostosowac w styles.css)
+   ========================================================================== */
+
+/* Naglowek HUD — Orbitron, uppercase, mocny glow */
+.hud-title {
+  font-family: var(--font-hud);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--hud-title-spacing);
+  color: var(--text-bright);
+  text-shadow: var(--glow-title);
+}
+
+/* Drobna etykieta / liczba w panelach — Chakra Petch, minimalny glow */
+.hud-label {
+  font-family: var(--font-hud-label);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-shadow: var(--glow-label);
+}
+
+/* Panel: cienka przygaszona ramka + neonowa rurka */
+.panel {
+  background: var(--panel-bg);
+  border: var(--panel-border);
+  box-shadow: var(--panel-glow);
+}
+
+/* Corner brackets bez dodatkowego markupu — jedna klasa na dowolnym divie.
+   8 warstw backgroundu = 4 rogi (poziom + pion na rog). */
+.hud-frame {
+  --b: linear-gradient(var(--bracket-color), var(--bracket-color));
+  background:
+    var(--b) top left     / var(--bracket-size) var(--bracket-width),
+    var(--b) top left     / var(--bracket-width) var(--bracket-size),
+    var(--b) top right    / var(--bracket-size) var(--bracket-width),
+    var(--b) top right    / var(--bracket-width) var(--bracket-size),
+    var(--b) bottom left  / var(--bracket-size) var(--bracket-width),
+    var(--b) bottom left  / var(--bracket-width) var(--bracket-size),
+    var(--b) bottom right / var(--bracket-size) var(--bracket-width),
+    var(--b) bottom right / var(--bracket-width) var(--bracket-size);
+  background-repeat: no-repeat;
+  filter: var(--bracket-glow);
+}
+
+/* Overlaye — fixed, pointer-events none, wymuszenie warstwy kompozytora
+   (statyczny raster, zero repaintow). Wlaczane klasa na <body>. */
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-vignette);
+  background: var(--vignette-bg);
+  transform: translateZ(0);
+}
+
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-scanlines);
+  background: var(--scanlines-bg);
+  transform: translateZ(0);
+  display: none;                 /* domyslnie WYL — przelacznik wg SPEC */
+}
+body.scanlines-on .scanlines {
+  display: block;
+}
+
+/* Boot: kontener intro (pomijanie klawiszem -> display:none z JS) */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-scanlines) + 1);
+  background: var(--bg-black);
+}
+.boot-line {
+  position: absolute;
+  top: 50%;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: var(--cyan);
+  box-shadow: var(--glow-title);
+  transform: scaleX(0);
+  animation: boot-line var(--boot-line) var(--ease-out) forwards;
+}
+
+/* ==========================================================================
+   NOTATKA DLA IMPLEMENTACJI (nie CSS):
+   Motyw xterm.js w renderer.js musi pasowac do palety:
+
+   const theme = {
+     background:      '#02080a',
+     foreground:      '#00e5ff',
+     cursor:          '#8ff8ff',
+     cursorAccent:    '#02080a',
+     selectionBackground: 'rgba(0, 229, 255, 0.25)',
+     black: '#02080a',     red: '#ff5f56',     green: '#00e5a0',
+     yellow: '#ff9f1c',    blue: '#00b8d9',    magenta: '#d580ff',
+     cyan: '#00e5ff',      white: '#d8f9ff',
+     brightBlack: '#087f9c', brightRed: '#ff8a80', brightGreen: '#8ff8ff',
+     brightYellow: '#ffc46b', brightBlue: '#8ff8ff', brightMagenta: '#eab8ff',
+     brightCyan: '#8ff8ff',   brightWhite: '#ffffff',
+   };
+   ========================================================================== */

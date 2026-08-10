@@ -1,11 +1,14 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const pty = require('node-pty');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
+const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
+const isAutomatedTest = isSmokeTest || isVisualTest;
 const terminals = new Map();
 let smokeTimeout;
 
@@ -110,9 +113,9 @@ function createWindow() {
     width: 1440,
     height: 900,
     frame: false,
-    fullscreen: !isSmokeTest,
-    show: !isSmokeTest,
-    backgroundColor: '#101418',
+    fullscreen: !isAutomatedTest,
+    show: !isAutomatedTest,
+    backgroundColor: '#02080a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -123,7 +126,7 @@ function createWindow() {
 
   window.loadFile(
     path.join(__dirname, 'renderer', 'index.html'),
-    isSmokeTest ? { query: { smoke: '1' } } : undefined
+    isAutomatedTest ? { query: { test: isSmokeTest ? 'smoke' : 'visual' } } : undefined
   );
 
   if (isSmokeTest) {
@@ -132,6 +135,40 @@ function createWindow() {
       process.exitCode = 1;
       app.quit();
     }, 15_000);
+  }
+
+  if (isVisualTest) {
+    window.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const diagnostics = await window.webContents.executeJavaScript(`({
+            fonts: {
+              terminal: document.fonts.check('14px "Monaspace Neon NF"'),
+              headings: document.fonts.check('600 14px Orbitron'),
+              labels: document.fonts.check('500 11px "Chakra Petch"')
+            },
+            bootComplete: document.body.classList.contains('boot-complete'),
+            scanlinesEnabled: document.body.classList.contains('scanlines-on'),
+            shellStatus: document.getElementById('shellStatusText').textContent,
+            gridColumns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns,
+            terminalGeometry: (() => {
+              const screen = document.querySelector('.xterm-screen').getBoundingClientRect();
+              return { width: screen.width, height: screen.height };
+            })()
+          })`);
+          const screenshot = await window.webContents.capturePage();
+          const screenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-phase1.png');
+          fs.writeFileSync(screenshotPath, screenshot.toPNG());
+          console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
+          console.log(`Visual test screenshot: ${screenshotPath}`);
+          process.exitCode = 0;
+        } catch (error) {
+          console.error(`Visual test failed: ${error.message}`);
+          process.exitCode = 1;
+        }
+        app.quit();
+      }, 3_000);
+    });
   }
 }
 
