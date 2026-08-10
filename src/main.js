@@ -13,10 +13,12 @@ const isAutomatedTest = isSmokeTest || isVisualTest;
 const terminals = new Map();
 const monitoringSessions = new Map();
 let smokeTimeout;
+let gracefulShutdownStarted = false;
 
 const MONITOR_INTERVAL_MS = 1_000;
 const PROCESS_REFRESH_TICKS = 3;
 const DISK_REFRESH_TICKS = 10;
+const MAX_TERMINALS_PER_WINDOW = 8;
 
 function isTrustedSender(event) {
   const senderUrl = event.senderFrame?.url;
@@ -33,16 +35,28 @@ function requireTrustedSender(event) {
   }
 }
 
-function disposeTerminal(webContentsId) {
-  const terminal = terminals.get(webContentsId);
-  if (!terminal) return;
+function validSessionId(value) {
+  return typeof value === 'string' && /^tty-[0-9]{2}$/.test(value) ? value : null;
+}
 
-  terminals.delete(webContentsId);
-  try {
-    terminal.kill();
-  } catch {
-    // The shell may already have exited.
+function disposeTerminal(webContentsId, sessionId = null) {
+  const clientTerminals = terminals.get(webContentsId);
+  if (!clientTerminals) return;
+  const targets = sessionId
+    ? [[sessionId, clientTerminals.get(sessionId)]]
+    : [...clientTerminals.entries()];
+
+  for (const [targetSessionId, terminal] of targets) {
+    if (!terminal) continue;
+    clientTerminals.delete(targetSessionId);
+    try {
+      terminal.kill();
+    } catch {
+      // The shell may already have exited.
+    }
   }
+
+  if (clientTerminals.size === 0) terminals.delete(webContentsId);
 }
 
 function finiteNumber(value, fallback = null) {
@@ -173,6 +187,10 @@ async function collectMonitoringSample(session) {
   return {
     timestamp: Date.now(),
     status: errorCount === 0 ? 'ok' : errorCount === 5 ? 'error' : 'partial',
+    session: {
+      hostname: safeLabel(os.hostname().replace(/\.local$/i, ''), 'LOCALHOST', 36),
+      uptimeSeconds: Math.max(Math.floor(os.uptime()), 0)
+    },
     cpu,
     memory,
     network,
@@ -231,15 +249,26 @@ function registerMonitoringIpc() {
 }
 
 function registerTerminalIpc() {
-  ipcMain.handle('terminal:start', (event, dimensions = {}) => {
+  ipcMain.handle('terminal:start', (event, options = {}) => {
     requireTrustedSender(event);
+    const sessionId = validSessionId(options.sessionId);
+    if (!sessionId) throw new Error('Invalid terminal session ID.');
 
-    if (terminals.has(event.sender.id)) {
-      return { started: true };
+    let clientTerminals = terminals.get(event.sender.id);
+    if (!clientTerminals) {
+      clientTerminals = new Map();
+      terminals.set(event.sender.id, clientTerminals);
+      event.sender.once('destroyed', () => disposeTerminal(event.sender.id));
     }
 
-    const cols = Number.isInteger(dimensions.cols) ? Math.min(Math.max(dimensions.cols, 2), 500) : 80;
-    const rows = Number.isInteger(dimensions.rows) ? Math.min(Math.max(dimensions.rows, 1), 300) : 24;
+    if (clientTerminals.has(sessionId)) {
+      return { started: true, sessionId };
+    }
+
+    if (clientTerminals.size >= MAX_TERMINALS_PER_WINDOW) throw new Error('Terminal session limit reached.');
+
+    const cols = Number.isInteger(options.cols) ? Math.min(Math.max(options.cols, 2), 500) : 80;
+    const rows = Number.isInteger(options.rows) ? Math.min(Math.max(options.rows, 1), 300) : 24;
     const shell = '/bin/zsh';
     const terminal = pty.spawn(shell, ['-l'], {
       name: 'xterm-256color',
@@ -254,35 +283,38 @@ function registerTerminalIpc() {
       }
     });
 
-    terminals.set(event.sender.id, terminal);
+    clientTerminals.set(sessionId, terminal);
 
     terminal.onData((data) => {
       if (!event.sender.isDestroyed()) {
-        event.sender.send('terminal:data', data);
+        event.sender.send('terminal:data', { sessionId, data });
       }
     });
 
     terminal.onExit(({ exitCode, signal }) => {
-      terminals.delete(event.sender.id);
+      clientTerminals.delete(sessionId);
+      if (clientTerminals.size === 0) terminals.delete(event.sender.id);
       if (!event.sender.isDestroyed()) {
-        event.sender.send('terminal:exit', { exitCode, signal });
+        event.sender.send('terminal:exit', { sessionId, exitCode, signal });
       }
     });
 
-    event.sender.once('destroyed', () => disposeTerminal(event.sender.id));
-    return { started: true, pid: terminal.pid, shell };
+    return { started: true, sessionId, pid: terminal.pid, shell };
   });
 
-  ipcMain.on('terminal:write', (event, data) => {
-    if (!isTrustedSender(event) || typeof data !== 'string' || data.length > 64 * 1024) return;
-    terminals.get(event.sender.id)?.write(data);
+  ipcMain.on('terminal:write', (event, payload) => {
+    const sessionId = validSessionId(payload?.sessionId);
+    const data = payload?.data;
+    if (!isTrustedSender(event) || !sessionId || typeof data !== 'string' || data.length > 64 * 1024) return;
+    terminals.get(event.sender.id)?.get(sessionId)?.write(data);
   });
 
-  ipcMain.on('terminal:resize', (event, dimensions) => {
-    if (!isTrustedSender(event) || !dimensions || !Number.isInteger(dimensions.cols) || !Number.isInteger(dimensions.rows)) return;
-    const cols = Math.min(Math.max(dimensions.cols, 2), 500);
-    const rows = Math.min(Math.max(dimensions.rows, 1), 300);
-    terminals.get(event.sender.id)?.resize(cols, rows);
+  ipcMain.on('terminal:resize', (event, payload) => {
+    const sessionId = validSessionId(payload?.sessionId);
+    if (!isTrustedSender(event) || !sessionId || !Number.isInteger(payload.cols) || !Number.isInteger(payload.rows)) return;
+    const cols = Math.min(Math.max(payload.cols, 2), 500);
+    const rows = Math.min(Math.max(payload.rows, 1), 300);
+    terminals.get(event.sender.id)?.get(sessionId)?.resize(cols, rows);
   });
 
   ipcMain.on('terminal:smoke-result', (event, result) => {
@@ -330,6 +362,25 @@ function createWindow() {
 
   if (isVisualTest) {
     window.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        window.webContents.executeJavaScript(`(() => {
+          const press = (code, shiftKey = false) => document.dispatchEvent(new KeyboardEvent('keydown', {
+            code,
+            metaKey: true,
+            shiftKey,
+            bubbles: true,
+            cancelable: true
+          }));
+          press('KeyT');
+          press('Digit1');
+          press('Digit1');
+          press('Digit2');
+          press('Digit2');
+          press('KeyL', true);
+          press('KeyL', true);
+        })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
+      }, 2_000);
+
       setTimeout(async () => {
         try {
           const diagnostics = await window.webContents.executeJavaScript(`({
@@ -341,6 +392,18 @@ function createWindow() {
             bootComplete: document.body.classList.contains('boot-complete'),
             scanlinesEnabled: document.body.classList.contains('scanlines-on'),
             shellStatus: document.getElementById('shellStatusText').textContent,
+            hostname: document.getElementById('hudHostname').textContent,
+            date: document.getElementById('hudDate').textContent,
+            clock: document.getElementById('hudClock').textContent.trim(),
+            uptime: document.getElementById('uptimeValue').textContent,
+            terminalSessionCount: document.querySelectorAll('#ttyTabs .tty-tab').length,
+            activeTerminal: document.querySelector('#ttyTabs .tty-tab.is-active')?.textContent || null,
+            systemPanelOn: !document.body.classList.contains('system-panel-hidden'),
+            networkPanelOn: !document.body.classList.contains('network-panel-hidden'),
+            systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
+            networkToggleCount: Number(document.body.dataset.networkToggleCount || 0),
+            scanlinesToggleCount: Number(document.body.dataset.scanlinesToggleCount || 0),
+            shortcutCount: document.querySelectorAll('.shortcut-legend kbd').length,
             monitoringReady: document.body.dataset.monitoringReady === 'true',
             monitoringSamples: Number(document.body.dataset.monitoringSamples || 0),
             monitoringStatus: document.getElementById('monitoringStatusText').textContent,
@@ -351,7 +414,7 @@ function createWindow() {
             processCount: document.querySelectorAll('#processList .process-row').length,
             gridColumns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns,
             terminalGeometry: (() => {
-              const screen = document.querySelector('.xterm-screen').getBoundingClientRect();
+              const screen = document.querySelector('.terminal-instance:not([hidden]) .xterm-screen').getBoundingClientRect();
               return { width: screen.width, height: screen.height };
             })()
           })`);
@@ -359,7 +422,18 @@ function createWindow() {
           if (!diagnostics.monitoringReady || diagnostics.monitoringSamples < 2) {
             throw new Error('Monitoring did not provide at least two samples');
           }
-          const screenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-phase2.png');
+          if (diagnostics.terminalSessionCount !== 2 || diagnostics.activeTerminal !== 'TTY 02') {
+            throw new Error('Cmd+T did not create and activate the second PTY session');
+          }
+          if (!diagnostics.systemPanelOn || !diagnostics.networkPanelOn || diagnostics.shortcutCount !== 4
+            || diagnostics.systemToggleCount !== 2 || diagnostics.networkToggleCount !== 2
+            || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled) {
+            throw new Error('HUD shortcut test did not restore the expected panel state');
+          }
+          if (diagnostics.terminalGeometry.width < 100 || diagnostics.terminalGeometry.height < 100) {
+            throw new Error('Active terminal has invalid geometry');
+          }
+          const screenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-phase3.png');
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
           console.log(`Visual test screenshot: ${screenshotPath}`);
@@ -369,7 +443,7 @@ function createWindow() {
           process.exitCode = 1;
         }
         app.quit();
-      }, 5_000);
+      }, 7_000);
     });
   }
 }
@@ -388,7 +462,10 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (gracefulShutdownStarted) return;
+  event.preventDefault();
+  gracefulShutdownStarted = true;
   clearTimeout(smokeTimeout);
   for (const webContentsId of terminals.keys()) {
     disposeTerminal(webContentsId);
@@ -396,4 +473,5 @@ app.on('before-quit', () => {
   for (const webContentsId of monitoringSessions.keys()) {
     disposeMonitoring(webContentsId);
   }
+  setTimeout(() => app.exit(process.exitCode || 0), 250);
 });

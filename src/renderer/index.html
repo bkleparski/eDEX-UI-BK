@@ -17,16 +17,25 @@
             <span class="hud-title">eDEX-UI BK</span>
             <span class="hud-label">GRID TERMINAL</span>
           </div>
-          <div class="hud-coordinate hud-label" aria-hidden="true">LOCAL SHELL / ZSH</div>
-          <div class="shell-status hud-label" id="shellStatus" data-state="starting">
-            <span class="status-beacon" aria-hidden="true"></span>
-            <span id="shellStatusText">LINK STARTING</span>
+          <div class="session-telemetry hud-label">
+            <span id="hudHostname">LOCALHOST</span>
+            <span class="session-divider" aria-hidden="true"></span>
+            <time id="hudDate" datetime="">----</time>
+          </div>
+          <div class="top-status-zone">
+            <time class="hud-clock" id="hudClock" datetime="">
+              <span id="clockHours">--:--</span><span id="clockSeconds">:--</span>
+            </time>
+            <span class="status-divider" aria-hidden="true"></span>
+            <div class="shell-status hud-label" id="shellStatus" data-state="starting">
+              <span id="shellStatusText">LINK STARTING</span>
+            </div>
           </div>
         </div>
       </header>
 
       <main class="workspace">
-        <aside class="side-panel panel hud-frame boot-frame" aria-labelledby="systemPanelTitle">
+        <aside class="side-panel panel hud-frame boot-frame" id="systemPanel" aria-labelledby="systemPanelTitle">
           <div class="panel-content boot-content boot-content--left">
             <header class="panel-heading">
               <h2 class="hud-title" id="systemPanelTitle">SYSTEM</h2>
@@ -57,6 +66,11 @@
                 </div>
               </section>
 
+              <section class="metric-block uptime-block" aria-labelledby="uptimeMetricTitle">
+                <span class="hud-label" id="uptimeMetricTitle">UPTIME</span>
+                <strong class="uptime-value" id="uptimeValue">--</strong>
+              </section>
+
               <div class="telemetry-error hud-label" id="systemError" hidden>SYSTEM DATA N/A</div>
             </div>
           </div>
@@ -65,14 +79,15 @@
         <section class="terminal-panel panel hud-frame boot-frame" aria-labelledby="terminalPanelTitle">
           <div class="terminal-heading boot-content boot-content--terminal">
             <h1 class="hud-title" id="terminalPanelTitle">COMMAND GRID</h1>
+            <div class="tty-tabs" id="ttyTabs" role="tablist" aria-label="Sesje terminala"></div>
             <span class="hud-label">INTERACTIVE ZSH</span>
           </div>
           <div class="terminal-surface boot-content boot-content--terminal">
-            <div id="terminal" aria-label="Terminal zsh"></div>
+            <div class="terminal-sessions" id="terminalSessions"></div>
           </div>
         </section>
 
-        <aside class="side-panel panel hud-frame boot-frame" aria-labelledby="networkPanelTitle">
+        <aside class="side-panel panel hud-frame boot-frame" id="networkPanel" aria-labelledby="networkPanelTitle">
           <div class="panel-content boot-content boot-content--right">
             <header class="panel-heading">
               <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
@@ -128,11 +143,18 @@
 
       <footer class="bottom-hud panel hud-frame boot-frame">
         <div class="bottom-hud__content boot-content boot-content--bottom">
-          <span class="hud-label">INPUT ROUTE / LOCAL PTY</span>
-          <button class="hud-control hud-label" id="scanlinesToggle" type="button">
-            SCANLINES <span id="scanlinesState">OFF</span>
-            <span class="control-shortcut">CMD SHIFT L</span>
-          </button>
+          <span class="hud-label input-route">INPUT ROUTE / LOCAL PTY</span>
+          <div class="shortcut-legend hud-label" aria-label="Skróty klawiszowe">
+            <span><kbd>⌘1</kbd> SYS</span>
+            <span><kbd>⌘2</kbd> NET</span>
+            <span><kbd>⇧⌘L</kbd> SCAN</span>
+            <span><kbd>⌘T</kbd> NEW TTY</span>
+          </div>
+          <div class="status-chips" aria-label="Stan interfejsu">
+            <button class="status-chip hud-label is-on" id="systemPanelToggle" type="button" aria-pressed="true">SYS <span id="systemPanelState">ON</span></button>
+            <button class="status-chip hud-label is-on" id="networkPanelToggle" type="button" aria-pressed="true">NET <span id="networkPanelState">ON</span></button>
+            <button class="status-chip hud-label" id="scanlinesToggle" type="button" aria-pressed="false">SCANLINES <span id="scanlinesState">OFF</span></button>
+          </div>
         </div>
       </footer>
     </div>

@@ -33,8 +33,10 @@ const testMode = new URLSearchParams(window.location.search).get('test');
 const isSmokeTest = testMode === 'smoke';
 const isVisualTest = testMode === 'visual';
 const smokeMarker = '__EDEX_PTY_ARM64_OK__';
-let terminal;
-let fitAddon;
+const maxTerminalSessions = 8;
+const terminalSessions = new Map();
+let activeSessionId = null;
+let nextSessionNumber = 1;
 let bootTimer;
 let bootActive = false;
 let smokeOutput = '';
@@ -69,6 +71,16 @@ function formatRate(bytesPerSecond) {
   if (value >= 1024 ** 2) return `${(value / (1024 ** 2)).toFixed(1)} MB/s`;
   if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
   return `${Math.round(value)} B/s`;
+}
+
+function formatUptime(totalSeconds) {
+  const seconds = numeric(totalSeconds);
+  if (seconds === null) return '--';
+  const totalMinutes = Math.floor(Math.max(seconds, 0) / 60);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return `${days}D ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 function pushHistory(history, value, limit = 42) {
@@ -152,6 +164,8 @@ function renderMonitoring(sample) {
   document.body.dataset.monitoringReady = 'true';
   document.body.dataset.monitoringSamples = String((Number(document.body.dataset.monitoringSamples) || 0) + 1);
   document.getElementById('monitoringStatusText').textContent = sample.status === 'ok' ? 'LIVE' : sample.status === 'partial' ? 'PARTIAL' : 'OFFLINE';
+  document.getElementById('hudHostname').textContent = sample.session?.hostname || 'LOCALHOST';
+  document.getElementById('uptimeValue').textContent = formatUptime(sample.session?.uptimeSeconds);
 
   const cpuLoad = sample.cpu?.loadPercent;
   document.getElementById('cpuValue').textContent = formatPercent(cpuLoad, 1);
@@ -220,10 +234,11 @@ function writeSetting(key, enabled) {
 }
 
 function focusTerminal() {
-  if (terminal) {
+  const session = terminalSessions.get(activeSessionId);
+  if (session) {
     requestAnimationFrame(() => {
-      fitAddon.fit();
-      terminal.focus();
+      session.fitAddon.fit();
+      session.terminal.focus();
     });
   }
 }
@@ -274,9 +289,12 @@ function initializeBoot() {
 }
 
 function updateScanlines(enabled) {
+  document.body.dataset.scanlinesToggleCount = String((Number(document.body.dataset.scanlinesToggleCount) || 0) + 1);
   document.body.classList.toggle('scanlines-on', enabled);
   document.getElementById('scanlinesState').textContent = enabled ? 'ON' : 'OFF';
-  document.getElementById('scanlinesToggle').setAttribute('aria-pressed', String(enabled));
+  const toggle = document.getElementById('scanlinesToggle');
+  toggle.setAttribute('aria-pressed', String(enabled));
+  toggle.classList.toggle('is-on', enabled);
   writeSetting(storageKeys.scanlines, enabled);
 }
 
@@ -285,21 +303,135 @@ function toggleScanlines() {
   focusTerminal();
 }
 
+function updatePanelVisibility(panelName, visible) {
+  const isSystem = panelName === 'system';
+  const bodyClass = isSystem ? 'system-panel-hidden' : 'network-panel-hidden';
+  const button = document.getElementById(isSystem ? 'systemPanelToggle' : 'networkPanelToggle');
+  const state = document.getElementById(isSystem ? 'systemPanelState' : 'networkPanelState');
+  const counterKey = isSystem ? 'systemToggleCount' : 'networkToggleCount';
+  document.body.dataset[counterKey] = String((Number(document.body.dataset[counterKey]) || 0) + 1);
+  document.body.classList.toggle(bodyClass, !visible);
+  button.classList.toggle('is-on', visible);
+  button.setAttribute('aria-pressed', String(visible));
+  state.textContent = visible ? 'ON' : 'OFF';
+  focusTerminal();
+}
+
+function togglePanel(panelName) {
+  const bodyClass = panelName === 'system' ? 'system-panel-hidden' : 'network-panel-hidden';
+  updatePanelVisibility(panelName, document.body.classList.contains(bodyClass));
+}
+
+function updateClock() {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  document.getElementById('clockHours').textContent = `${hours}:${minutes}`;
+  document.getElementById('clockSeconds').textContent = `:${seconds}`;
+  document.getElementById('hudClock').dateTime = now.toISOString();
+  document.getElementById('hudDate').textContent = date;
+  document.getElementById('hudDate').dateTime = date;
+}
+
 function initializeControls() {
   updateScanlines(readSetting(storageKeys.scanlines));
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
+  document.getElementById('systemPanelToggle').addEventListener('click', () => togglePanel('system'));
+  document.getElementById('networkPanelToggle').addEventListener('click', () => togglePanel('network'));
+  updateClock();
+  const clockTimer = setInterval(updateClock, 1_000);
+  window.addEventListener('beforeunload', () => clearInterval(clockTimer), { once: true });
+
   document.addEventListener('keydown', (event) => {
-    if (!bootActive && event.metaKey && event.shiftKey && event.code === 'KeyL') {
+    if (bootActive || !event.metaKey || event.altKey || event.ctrlKey) return;
+    if (event.shiftKey && event.code === 'KeyL') {
       event.preventDefault();
+      event.stopPropagation();
       toggleScanlines();
+      return;
     }
-  });
+    if (event.shiftKey) return;
+    if (event.code === 'Digit1') {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePanel('system');
+    } else if (event.code === 'Digit2') {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePanel('network');
+    } else if (event.code === 'KeyT') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (terminalSessions.size > 0) createTerminalSession();
+    }
+  }, true);
 }
 
-async function initializeTerminal() {
-  await document.fonts.ready;
+function updateShellStatus() {
+  const session = terminalSessions.get(activeSessionId);
+  const status = document.getElementById('shellStatus');
+  const label = document.getElementById('shellStatusText');
+  if (!session) {
+    status.dataset.state = 'offline';
+    label.textContent = 'LINK OFFLINE';
+  } else if (session.online) {
+    status.dataset.state = 'online';
+    label.textContent = 'LINK ONLINE';
+  } else {
+    status.dataset.state = session.failed ? 'offline' : 'starting';
+    label.textContent = session.failed ? 'LINK FAILED' : 'LINK STARTING';
+  }
+}
 
-  terminal = new Terminal({
+function switchTerminalSession(sessionId) {
+  const nextSession = terminalSessions.get(sessionId);
+  if (!nextSession) return;
+  activeSessionId = sessionId;
+  for (const [id, session] of terminalSessions) {
+    const active = id === sessionId;
+    session.container.hidden = !active;
+    session.tab.classList.toggle('is-active', active);
+    session.tab.setAttribute('aria-selected', String(active));
+    session.tab.tabIndex = active ? 0 : -1;
+  }
+  updateShellStatus();
+  focusTerminal();
+}
+
+function createTerminalTab(sessionId, label) {
+  const tab = document.createElement('button');
+  tab.className = 'tty-tab hud-label';
+  tab.type = 'button';
+  tab.id = `${sessionId}-tab`;
+  tab.setAttribute('role', 'tab');
+  tab.setAttribute('aria-controls', `${sessionId}-panel`);
+  tab.textContent = label;
+  tab.addEventListener('click', () => switchTerminalSession(sessionId));
+  document.getElementById('ttyTabs').append(tab);
+  return tab;
+}
+
+async function createTerminalSession() {
+  if (terminalSessions.size >= maxTerminalSessions) {
+    terminalSessions.get(activeSessionId)?.terminal.write('\r\n[TTY LIMIT: 8]\r\n');
+    return null;
+  }
+
+  const sessionNumber = nextSessionNumber;
+  nextSessionNumber += 1;
+  const sessionId = `tty-${String(sessionNumber).padStart(2, '0')}`;
+  const label = `TTY ${String(sessionNumber).padStart(2, '0')}`;
+  const container = document.createElement('div');
+  container.className = 'terminal-instance';
+  container.id = `${sessionId}-panel`;
+  container.setAttribute('role', 'tabpanel');
+  container.setAttribute('aria-labelledby', `${sessionId}-tab`);
+  container.setAttribute('aria-label', `${label}, terminal zsh`);
+  document.getElementById('terminalSessions').append(container);
+
+  const terminal = new Terminal({
     cursorBlink: true,
     convertEol: false,
     fontFamily: '"Monaspace Neon NF", "SF Mono", Menlo, monospace',
@@ -311,15 +443,52 @@ async function initializeTerminal() {
     theme: terminalTheme
   });
 
-  fitAddon = new FitAddon.FitAddon();
+  const fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
-  terminal.open(document.getElementById('terminal'));
+  terminal.open(container);
   fitAddon.fit();
+  const session = {
+    id: sessionId,
+    terminal,
+    fitAddon,
+    container,
+    tab: createTerminalTab(sessionId, label),
+    online: false,
+    failed: false
+  };
+  terminalSessions.set(sessionId, session);
+  terminal.onData((data) => window.terminalApi.write(sessionId, data));
+  terminal.onResize(({ cols, rows }) => window.terminalApi.resize(sessionId, cols, rows));
+  switchTerminalSession(sessionId);
 
-  window.terminalApi.onData((data) => {
-    terminal.write(data);
+  try {
+    await window.terminalApi.start(sessionId, { cols: terminal.cols, rows: terminal.rows });
+    session.online = true;
+    updateShellStatus();
+    focusTerminal();
+    if (isSmokeTest && sessionNumber === 1) {
+      window.terminalApi.write(sessionId, `printf '${smokeMarker}\\n'\r`);
+    } else if (isVisualTest) {
+      window.terminalApi.write(sessionId, "clear; printf 'PTY LINK VERIFIED / ZSH READY\\n'\r");
+    }
+  } catch (error) {
+    session.failed = true;
+    terminal.write(`\r\n[ZSH START FAILED: ${error.message}]\r\n`);
+    updateShellStatus();
+    if (isSmokeTest && !smokeCompleted) window.terminalApi.reportSmokeResult(false);
+  }
+  return session;
+}
 
-    if (isSmokeTest && !smokeCompleted) {
+async function initializeTerminal() {
+  await document.fonts.ready;
+
+  window.terminalApi.onData(({ sessionId, data }) => {
+    const session = terminalSessions.get(sessionId);
+    if (!session || typeof data !== 'string') return;
+    session.terminal.write(data);
+
+    if (isSmokeTest && sessionId === 'tty-01' && !smokeCompleted) {
       smokeOutput += data;
       if (smokeOutput.includes(smokeMarker)) {
         smokeCompleted = true;
@@ -328,38 +497,23 @@ async function initializeTerminal() {
     }
   });
 
-  window.terminalApi.onExit(({ exitCode }) => {
-    terminal.write(`\r\n[SHELL OFFLINE: ${exitCode}]\r\n`);
-    document.getElementById('shellStatus').dataset.state = 'offline';
-    document.getElementById('shellStatusText').textContent = 'LINK OFFLINE';
-    if (isSmokeTest && !smokeCompleted) {
+  window.terminalApi.onExit(({ sessionId, exitCode }) => {
+    const session = terminalSessions.get(sessionId);
+    if (!session) return;
+    session.online = false;
+    session.failed = true;
+    session.terminal.write(`\r\n[SHELL OFFLINE: ${exitCode}]\r\n`);
+    if (sessionId === activeSessionId) updateShellStatus();
+    if (isSmokeTest && sessionId === 'tty-01' && !smokeCompleted) {
       smokeCompleted = true;
       window.terminalApi.reportSmokeResult(false);
     }
   });
 
-  terminal.onData((data) => window.terminalApi.write(data));
-  terminal.onResize(({ cols, rows }) => window.terminalApi.resize(cols, rows));
-
-  const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+  const resizeObserver = new ResizeObserver(() => focusTerminal());
   resizeObserver.observe(document.querySelector('.terminal-surface'));
-
-  try {
-    await window.terminalApi.start({ cols: terminal.cols, rows: terminal.rows });
-    document.getElementById('shellStatus').dataset.state = 'online';
-    document.getElementById('shellStatusText').textContent = 'LINK ONLINE';
-    focusTerminal();
-    if (isSmokeTest) {
-      window.terminalApi.write(`printf '${smokeMarker}\\n'\r`);
-    } else if (isVisualTest) {
-      window.terminalApi.write("clear; printf 'PTY LINK VERIFIED / ZSH READY\\n'\r");
-    }
-  } catch (error) {
-    terminal.write(`\r\n[ZSH START FAILED: ${error.message}]\r\n`);
-    document.getElementById('shellStatus').dataset.state = 'offline';
-    document.getElementById('shellStatusText').textContent = 'LINK FAILED';
-    if (isSmokeTest) window.terminalApi.reportSmokeResult(false);
-  }
+  window.addEventListener('beforeunload', () => resizeObserver.disconnect(), { once: true });
+  await createTerminalSession();
 }
 
 initializeBoot();

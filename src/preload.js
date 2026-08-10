@@ -13,9 +13,9 @@ function subscribe(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld('terminalApi', Object.freeze({
-  start: (dimensions) => ipcRenderer.invoke('terminal:start', dimensions),
-  write: (data) => ipcRenderer.send('terminal:write', data),
-  resize: (cols, rows) => ipcRenderer.send('terminal:resize', { cols, rows }),
+  start: (sessionId, dimensions) => ipcRenderer.invoke('terminal:start', { sessionId, ...dimensions }),
+  write: (sessionId, data) => ipcRenderer.send('terminal:write', { sessionId, data }),
+  resize: (sessionId, cols, rows) => ipcRenderer.send('terminal:resize', { sessionId, cols, rows }),
   onData: (callback) => subscribe('terminal:data', callback),
   onExit: (callback) => subscribe('terminal:exit', callback),
   reportSmokeResult: (ok) => ipcRenderer.send('terminal:smoke-result', { ok: ok === true })
