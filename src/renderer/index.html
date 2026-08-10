@@ -30,11 +30,34 @@
           <div class="panel-content boot-content boot-content--left">
             <header class="panel-heading">
               <h2 class="hud-title" id="systemPanelTitle">SYSTEM</h2>
-              <span class="hud-label">TELEMETRY</span>
+              <span class="hud-label" id="monitoringStatusText">SYNCING</span>
             </header>
-            <div class="panel-placeholder hud-label">
-              <span class="placeholder-mark" aria-hidden="true"></span>
-              <span>MONITORING MODULE RESERVED</span>
+
+            <div class="telemetry-stack" aria-live="polite">
+              <section class="metric-block" aria-labelledby="cpuMetricTitle">
+                <div class="metric-heading">
+                  <span class="hud-label" id="cpuMetricTitle">CPU LOAD</span>
+                  <span class="metric-value" id="cpuValue">--</span>
+                </div>
+                <svg class="sparkline" viewBox="0 0 100 34" preserveAspectRatio="none" role="img" aria-label="Historia obciążenia CPU">
+                  <polyline id="cpuSparkline" points="0,34 100,34"></polyline>
+                </svg>
+                <div class="core-grid" id="cpuCores" aria-label="Obciążenie rdzeni CPU"></div>
+              </section>
+
+              <section class="metric-block" aria-labelledby="memoryMetricTitle">
+                <div class="metric-heading">
+                  <span class="hud-label" id="memoryMetricTitle">MEMORY</span>
+                  <span class="metric-value" id="memoryValue">--</span>
+                </div>
+                <div class="meter" aria-hidden="true"><span id="memoryMeter"></span></div>
+                <div class="metric-pairs hud-label">
+                  <span>USED <strong id="memoryUsed">--</strong></span>
+                  <span>FREE <strong id="memoryAvailable">--</strong></span>
+                </div>
+              </section>
+
+              <div class="telemetry-error hud-label" id="systemError" hidden>SYSTEM DATA N/A</div>
             </div>
           </div>
         </aside>
@@ -53,11 +76,51 @@
           <div class="panel-content boot-content boot-content--right">
             <header class="panel-heading">
               <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
-              <span class="hud-label">STORAGE / TASKS</span>
+              <span class="hud-label" id="networkInterface">INTERFACE --</span>
             </header>
-            <div class="panel-placeholder hud-label">
-              <span class="placeholder-mark" aria-hidden="true"></span>
-              <span>DATA MODULE RESERVED</span>
+
+            <div class="telemetry-stack telemetry-stack--right" aria-live="polite">
+              <section class="metric-block network-block" aria-labelledby="networkMetricTitle">
+                <span class="hud-label metric-section-label" id="networkMetricTitle">THROUGHPUT</span>
+                <div class="network-values">
+                  <div>
+                    <span class="hud-label">DOWN</span>
+                    <strong class="metric-value metric-value--small" id="networkDown">--</strong>
+                  </div>
+                  <div>
+                    <span class="hud-label">UP</span>
+                    <strong class="metric-value metric-value--small" id="networkUp">--</strong>
+                  </div>
+                </div>
+                <svg class="sparkline sparkline--network" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Historia transferu sieciowego">
+                  <polyline class="sparkline-secondary" id="networkUpSparkline" points="0,28 100,28"></polyline>
+                  <polyline id="networkDownSparkline" points="0,28 100,28"></polyline>
+                </svg>
+              </section>
+
+              <section class="metric-block" aria-labelledby="diskMetricTitle">
+                <div class="metric-heading">
+                  <span class="hud-label" id="diskMetricTitle">DATA VOLUME</span>
+                  <span class="metric-value metric-value--small" id="diskValue">--</span>
+                </div>
+                <div class="meter" aria-hidden="true"><span id="diskMeter"></span></div>
+                <div class="metric-pairs hud-label">
+                  <span>USED <strong id="diskUsed">--</strong></span>
+                  <span>FREE <strong id="diskAvailable">--</strong></span>
+                </div>
+              </section>
+
+              <section class="metric-block process-block" aria-labelledby="processMetricTitle">
+                <div class="metric-heading">
+                  <span class="hud-label" id="processMetricTitle">TOP PROCESSES</span>
+                  <span class="hud-label">CPU</span>
+                </div>
+                <ol class="process-list" id="processList">
+                  <li class="process-empty hud-label">AWAITING DATA</li>
+                </ol>
+              </section>
+
+              <div class="telemetry-error hud-label" id="networkError" hidden>NETWORK DATA N/A</div>
             </div>
           </div>
         </aside>

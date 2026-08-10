@@ -39,6 +39,169 @@ let bootTimer;
 let bootActive = false;
 let smokeOutput = '';
 let smokeCompleted = false;
+const telemetryHistory = {
+  cpu: [],
+  networkDown: [],
+  networkUp: []
+};
+
+function numeric(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatPercent(value, digits = 0) {
+  const number = numeric(value);
+  return number === null ? '--' : `${number.toFixed(digits)}%`;
+}
+
+function formatCapacity(bytes) {
+  const value = numeric(bytes);
+  if (value === null) return '--';
+  const gibibytes = value / (1024 ** 3);
+  return gibibytes >= 100 ? `${gibibytes.toFixed(0)} GB` : `${gibibytes.toFixed(1)} GB`;
+}
+
+function formatRate(bytesPerSecond) {
+  const value = numeric(bytesPerSecond);
+  if (value === null) return '--';
+  if (value >= 1024 ** 3) return `${(value / (1024 ** 3)).toFixed(1)} GB/s`;
+  if (value >= 1024 ** 2) return `${(value / (1024 ** 2)).toFixed(1)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
+  return `${Math.round(value)} B/s`;
+}
+
+function pushHistory(history, value, limit = 42) {
+  history.push(Math.max(numeric(value) ?? 0, 0));
+  if (history.length > limit) history.splice(0, history.length - limit);
+}
+
+function sparklinePoints(values, height, maximum = null) {
+  if (values.length === 0) return `0,${height} 100,${height}`;
+  const scaleMaximum = Math.max(maximum ?? Math.max(...values), 1);
+  return values.map((value, index) => {
+    const x = values.length === 1 ? 100 : (index / (values.length - 1)) * 100;
+    const y = height - (Math.min(value, scaleMaximum) / scaleMaximum) * (height - 2);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+}
+
+function setMeter(id, percent) {
+  const value = numeric(percent);
+  document.getElementById(id).style.transform = `scaleX(${value === null ? 0 : Math.min(Math.max(value, 0), 100) / 100})`;
+}
+
+function renderCoreLoads(cores) {
+  const container = document.getElementById('cpuCores');
+  container.replaceChildren();
+  if (!Array.isArray(cores) || cores.length === 0) {
+    const empty = document.createElement('span');
+    empty.className = 'hud-label core-empty';
+    empty.textContent = 'CORE DATA N/A';
+    container.append(empty);
+    return;
+  }
+
+  cores.forEach((load, index) => {
+    const core = document.createElement('span');
+    core.className = 'core-cell';
+    core.title = `Core ${index + 1}: ${formatPercent(load, 0)}`;
+    core.setAttribute('aria-label', core.title);
+    const level = document.createElement('span');
+    level.style.transform = `scaleY(${Math.min(Math.max(numeric(load) ?? 0, 0), 100) / 100})`;
+    core.append(level);
+    container.append(core);
+  });
+}
+
+function renderProcesses(processes) {
+  const list = document.getElementById('processList');
+  list.replaceChildren();
+  if (!Array.isArray(processes) || processes.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'process-empty hud-label';
+    empty.textContent = 'PROCESS DATA N/A';
+    list.append(empty);
+    return;
+  }
+
+  processes.slice(0, 6).forEach((processInfo, index) => {
+    const row = document.createElement('li');
+    row.className = 'process-row';
+
+    const rank = document.createElement('span');
+    rank.className = 'process-rank';
+    rank.textContent = String(index + 1).padStart(2, '0');
+
+    const name = document.createElement('span');
+    name.className = 'process-name';
+    name.textContent = typeof processInfo.name === 'string' ? processInfo.name : 'UNKNOWN';
+    name.title = name.textContent;
+
+    const cpu = document.createElement('span');
+    cpu.className = 'process-cpu';
+    cpu.textContent = formatPercent(processInfo.cpuPercent, 1);
+
+    row.append(rank, name, cpu);
+    list.append(row);
+  });
+}
+
+function renderMonitoring(sample) {
+  if (!sample || typeof sample !== 'object') return;
+  document.body.dataset.monitoringReady = 'true';
+  document.body.dataset.monitoringSamples = String((Number(document.body.dataset.monitoringSamples) || 0) + 1);
+  document.getElementById('monitoringStatusText').textContent = sample.status === 'ok' ? 'LIVE' : sample.status === 'partial' ? 'PARTIAL' : 'OFFLINE';
+
+  const cpuLoad = sample.cpu?.loadPercent;
+  document.getElementById('cpuValue').textContent = formatPercent(cpuLoad, 1);
+  pushHistory(telemetryHistory.cpu, cpuLoad);
+  document.getElementById('cpuSparkline').setAttribute('points', sparklinePoints(telemetryHistory.cpu, 34, 100));
+  renderCoreLoads(sample.cpu?.cores);
+
+  document.getElementById('memoryValue').textContent = formatPercent(sample.memory?.usePercent, 0);
+  document.getElementById('memoryUsed').textContent = formatCapacity(sample.memory?.usedBytes);
+  document.getElementById('memoryAvailable').textContent = formatCapacity(sample.memory?.availableBytes);
+  setMeter('memoryMeter', sample.memory?.usePercent);
+
+  const down = sample.network?.downBytesPerSecond;
+  const up = sample.network?.upBytesPerSecond;
+  document.getElementById('networkInterface').textContent = sample.network?.interface ? `INTERFACE ${sample.network.interface}` : 'INTERFACE N/A';
+  document.getElementById('networkDown').textContent = formatRate(down);
+  document.getElementById('networkUp').textContent = formatRate(up);
+  pushHistory(telemetryHistory.networkDown, down);
+  pushHistory(telemetryHistory.networkUp, up);
+  const networkMaximum = Math.max(...telemetryHistory.networkDown, ...telemetryHistory.networkUp, 1);
+  document.getElementById('networkDownSparkline').setAttribute('points', sparklinePoints(telemetryHistory.networkDown, 28, networkMaximum));
+  document.getElementById('networkUpSparkline').setAttribute('points', sparklinePoints(telemetryHistory.networkUp, 28, networkMaximum));
+
+  document.getElementById('diskValue').textContent = formatPercent(sample.disk?.usePercent, 0);
+  document.getElementById('diskUsed').textContent = formatCapacity(sample.disk?.usedBytes);
+  document.getElementById('diskAvailable').textContent = formatCapacity(sample.disk?.availableBytes);
+  setMeter('diskMeter', sample.disk?.usePercent);
+  renderProcesses(sample.processes);
+
+  const systemUnavailable = !sample.cpu && !sample.memory;
+  const networkUnavailable = !sample.network && !sample.disk && (!sample.processes || sample.processes.length === 0);
+  document.getElementById('systemError').hidden = !systemUnavailable;
+  document.getElementById('networkError').hidden = !networkUnavailable;
+}
+
+function initializeMonitoring() {
+  const unsubscribe = window.monitoringApi.onData(renderMonitoring);
+  window.addEventListener('beforeunload', () => {
+    unsubscribe();
+    window.monitoringApi.stop();
+  }, { once: true });
+
+  window.monitoringApi.start().catch((error) => {
+    document.body.dataset.monitoringReady = 'true';
+    document.getElementById('monitoringStatusText').textContent = 'OFFLINE';
+    document.getElementById('systemError').hidden = false;
+    document.getElementById('networkError').hidden = false;
+    console.error('Monitoring initialization failed:', error);
+  });
+}
 
 function readSetting(key) {
   try {
@@ -189,7 +352,7 @@ async function initializeTerminal() {
     if (isSmokeTest) {
       window.terminalApi.write(`printf '${smokeMarker}\\n'\r`);
     } else if (isVisualTest) {
-      window.terminalApi.write("printf '\\033[36mPTY LINK VERIFIED / ZSH READY\\033[0m\\n'\r");
+      window.terminalApi.write("clear; printf 'PTY LINK VERIFIED / ZSH READY\\n'\r");
     }
   } catch (error) {
     terminal.write(`\r\n[ZSH START FAILED: ${error.message}]\r\n`);
@@ -201,6 +364,7 @@ async function initializeTerminal() {
 
 initializeBoot();
 initializeControls();
+initializeMonitoring();
 initializeTerminal().catch((error) => {
   document.getElementById('shellStatus').dataset.state = 'offline';
   document.getElementById('shellStatusText').textContent = 'LINK FAILED';

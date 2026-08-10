@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 function subscribe(channel, callback) {
   if (typeof callback !== 'function') {
-    throw new TypeError('Terminal event callback must be a function.');
+    throw new TypeError('IPC event callback must be a function.');
   }
 
   const listener = (_event, payload) => callback(payload);
@@ -19,4 +19,10 @@ contextBridge.exposeInMainWorld('terminalApi', Object.freeze({
   onData: (callback) => subscribe('terminal:data', callback),
   onExit: (callback) => subscribe('terminal:exit', callback),
   reportSmokeResult: (ok) => ipcRenderer.send('terminal:smoke-result', { ok: ok === true })
+}));
+
+contextBridge.exposeInMainWorld('monitoringApi', Object.freeze({
+  start: () => ipcRenderer.invoke('monitoring:start'),
+  stop: () => ipcRenderer.send('monitoring:stop'),
+  onData: (callback) => subscribe('monitoring:data', callback)
 }));
