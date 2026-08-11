@@ -16,7 +16,7 @@ const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WI
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
 const minimumVisualTerminalWidth = visualTestWidth < 1200 ? 500 : 850;
 const minimumVisualFileListHeight = visualTestHeight < 700 ? 24 : 30;
-const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase12-browser');
+const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase13-browser');
 const visualBrowserChild = path.join(visualBrowserRoot, 'child');
 const visualBrowserFile = path.join(visualBrowserRoot, "O'Brien phase 11.txt");
 const visualBrowserImage = path.join(visualBrowserChild, 'preview.svg');
@@ -314,10 +314,11 @@ async function previewImageFile(filePath) {
   }
 }
 
-async function listDirectoryFiles(cwd, sessionId) {
+async function listDirectoryFiles(cwd, sessionId, showHidden = false) {
   try {
     const directoryEntries = await fs.promises.readdir(cwd, { withFileTypes: true });
     const entries = directoryEntries
+      .filter((entry) => showHidden || !entry.name.startsWith('.'))
       .map((entry) => ({
         name: safeLabel(entry.name, 'UNKNOWN', 96),
         fullPath: path.join(cwd, entry.name),
@@ -353,9 +354,9 @@ async function listDirectoryFiles(cwd, sessionId) {
   }
 }
 
-async function listTerminalFiles(terminal, sessionId) {
+async function listTerminalFiles(terminal, sessionId, showHidden = false) {
   try {
-    return listDirectoryFiles(await terminalWorkingDirectory(terminal), sessionId);
+    return listDirectoryFiles(await terminalWorkingDirectory(terminal), sessionId, showHidden);
   } catch {
     return {
       status: 'error',
@@ -746,19 +747,20 @@ function registerFilesIpc() {
   ipcMain.handle('files:list', async (event, payload = {}) => {
     requireTrustedSender(event);
     const sessionId = validSessionId(payload.sessionId);
+    const showHidden = payload.showHidden === true;
     if (!sessionId) throw new Error('Invalid terminal session ID.');
     if (payload.directoryPath !== null && payload.directoryPath !== undefined) {
       const directoryPath = validDirectoryPath(payload.directoryPath);
       if (!directoryPath) {
         return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
       }
-      return listDirectoryFiles(directoryPath, sessionId);
+      return listDirectoryFiles(directoryPath, sessionId, showHidden);
     }
     const terminal = terminals.get(event.sender.id)?.get(sessionId);
     if (!terminal) {
       return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
     }
-    return listTerminalFiles(terminal, sessionId);
+    return listTerminalFiles(terminal, sessionId, showHidden);
   });
 
   ipcMain.handle('files:preview', async (event, payload = {}) => {
@@ -770,6 +772,12 @@ function registerFilesIpc() {
 function createWindow() {
   if (isVisualTest) {
     fs.mkdirSync(visualBrowserChild, { recursive: true });
+    for (let index = 0; index < 90; index += 1) {
+      fs.mkdirSync(path.join(visualBrowserRoot, `.hidden-${String(index).padStart(3, '0')}`), { recursive: true });
+    }
+    ['Desktop', 'Documents', 'Downloads', 'Pictures'].forEach((directoryName) => {
+      fs.mkdirSync(path.join(visualBrowserRoot, directoryName), { recursive: true });
+    });
     fs.writeFileSync(visualBrowserFile, 'phase 11 drag fixture\n');
     fs.writeFileSync(path.join(visualBrowserChild, 'inside.txt'), 'phase 11 browsing fixture\n');
     fs.writeFileSync(visualBrowserImage, `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
@@ -932,8 +940,13 @@ function createWindow() {
           waitFor(
             () => document.body.dataset.fileBrowserMode === 'live'
               && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)}
-              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)}),
+              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)})
+              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.name === 'Desktop')
+              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.name === 'Documents')
+              && ![...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.name.startsWith('.hidden-'))
+              && document.getElementById('fileBrowserCount').textContent === '6 ITEMS',
             () => {
+              document.body.dataset.dotfilesLiveFiltered = 'true';
               const child = [...document.querySelectorAll('#fileList .file-row')]
                 .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
               child.click();
@@ -948,63 +961,124 @@ function createWindow() {
                       && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)},
                     () => {
                       document.body.dataset.fileBrowserAscended = 'true';
-                      const file = [...document.querySelectorAll('#fileList .file-row')]
-                        .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserFile)});
-                      window.terminalApi.write('tty-03', "printf '__EDEX_PANEL_DROP_OK__<%s>\\\\n' ");
-                      dispatchPanelFileDrag(file);
-                      setTimeout(() => window.terminalApi.write('tty-03', '\\r'), 100);
+                      press('Period', true);
                       waitFor(
-                        () => document.body.dataset.panelDropShellVerified === 'true',
+                        () => document.body.dataset.dotfilesVisible === 'true'
+                          && document.getElementById('dotfilesToggle').textContent === 'DOTS SHOWN'
+                          && document.getElementById('fileBrowserCount').textContent === '96+ ITEMS'
+                          && [...document.querySelectorAll('#fileList .file-row')]
+                            .some((row) => row.dataset.name.startsWith('.hidden-')),
                         () => {
-                          document.getElementById('fileBrowserMode').click();
+                          document.body.dataset.dotfilesShownObserved = 'true';
+                          press('Period', true);
                           waitFor(
-                            () => document.body.dataset.fileBrowserMode === 'live',
+                            () => document.body.dataset.dotfilesVisible === 'false'
+                              && document.getElementById('dotfilesToggle').textContent === 'DOTS HIDDEN'
+                              && document.getElementById('fileBrowserCount').textContent === '6 ITEMS'
+                              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.name === 'Desktop')
+                              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.name === 'Documents')
+                              && ![...document.querySelectorAll('#fileList .file-row')]
+                                .some((row) => row.dataset.name.startsWith('.hidden-')),
                             () => {
-                              document.body.dataset.fileBrowserLiveResumed = 'true';
-                              setTimeout(() => {
-                                const liveChild = [...document.querySelectorAll('#fileList .file-row')]
-                                  .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
-                                liveChild?.click();
-                                waitFor(
-                                  () => document.body.dataset.fileBrowserMode === 'browsing'
-                                    && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserChild)}
-                                    && [...document.querySelectorAll('#fileList .file-row')]
-                                      .some((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)}),
-                                  () => {
-                                    const largeRow = [...document.querySelectorAll('#fileList .file-row')]
-                                      .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserLargeImage)});
-                                    dispatchPreviewPointer(largeRow);
-                                    waitFor(
-                                      () => document.getElementById('fileImagePreview').dataset.state === 'message'
-                                        && document.getElementById('fileImagePreviewMessage').textContent === 'FILE TOO LARGE',
-                                      () => {
-                                        document.body.dataset.imagePreviewTooLargeObserved = 'true';
-                                        dispatchPreviewPointer(largeRow, 'pointerout');
-                                        const previewRow = [...document.querySelectorAll('#fileList .file-row')]
-                                          .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)});
-                                        dispatchPreviewPointer(previewRow);
+                              document.body.dataset.dotfilesHiddenRestored = 'true';
+                              const file = [...document.querySelectorAll('#fileList .file-row')]
+                                .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserFile)});
+                              window.terminalApi.write('tty-03', "printf '__EDEX_PANEL_DROP_OK__<%s>\\\\n' ");
+                              dispatchPanelFileDrag(file);
+                              setTimeout(() => window.terminalApi.write('tty-03', '\\r'), 100);
+                              waitFor(
+                                () => document.body.dataset.panelDropShellVerified === 'true',
+                                () => {
+                                  document.getElementById('fileBrowserMode').click();
+                                  waitFor(
+                                    () => document.body.dataset.fileBrowserMode === 'live',
+                                    () => {
+                                      document.body.dataset.fileBrowserLiveResumed = 'true';
+                                      setTimeout(() => {
+                                        const liveChild = [...document.querySelectorAll('#fileList .file-row')]
+                                          .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
+                                        liveChild?.click();
                                         waitFor(
-                                          () => document.body.dataset.imagePreviewVisible === 'true'
-                                            && document.getElementById('fileImagePreview').dataset.state === 'image',
+                                          () => document.body.dataset.fileBrowserMode === 'browsing'
+                                            && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserChild)}
+                                            && [...document.querySelectorAll('#fileList .file-row')]
+                                              .some((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)}),
                                           () => {
-                                            document.body.dataset.imagePreviewFirstObserved = 'true';
-                                            dispatchPreviewDragCycle(previewRow);
+                                            const largeRow = [...document.querySelectorAll('#fileList .file-row')]
+                                              .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserLargeImage)});
+                                            dispatchPreviewPointer(largeRow);
                                             waitFor(
-                                              () => document.body.dataset.imagePreviewHiddenByDrag === 'true'
-                                                && document.body.dataset.imagePreviewVisible === 'false',
+                                              () => document.getElementById('fileImagePreview').dataset.state === 'message'
+                                                && document.getElementById('fileImagePreviewMessage').textContent === 'FILE TOO LARGE',
                                               () => {
-                                                const cachedRow = [...document.querySelectorAll('#fileList .file-row')]
+                                                document.body.dataset.imagePreviewTooLargeObserved = 'true';
+                                                dispatchPreviewPointer(largeRow, 'pointerout');
+                                                const previewRow = [...document.querySelectorAll('#fileList .file-row')]
                                                   .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)});
-                                                dispatchPreviewPointer(cachedRow);
+                                                dispatchPreviewPointer(previewRow);
+                                                waitFor(
+                                                  () => document.body.dataset.imagePreviewVisible === 'true'
+                                                    && document.getElementById('fileImagePreview').dataset.state === 'image',
+                                                  () => {
+                                                    document.body.dataset.imagePreviewFirstObserved = 'true';
+                                                    dispatchPreviewDragCycle(previewRow);
+                                                    waitFor(
+                                                      () => document.body.dataset.imagePreviewHiddenByDrag === 'true'
+                                                        && document.body.dataset.imagePreviewVisible === 'false',
+                                                      () => {
+                                                        const cachedRow = [...document.querySelectorAll('#fileList .file-row')]
+                                                          .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)});
+                                                        dispatchPreviewPointer(cachedRow);
+                                                        waitFor(
+                                                          () => document.body.dataset.imagePreviewVisible === 'true',
+                                                          () => {
+                                                            const preview = document.getElementById('fileImagePreview');
+                                                            const image = document.getElementById('fileImagePreviewImage');
+                                                            const previewRect = preview.getBoundingClientRect();
+                                                            const imageRect = image.getBoundingClientRect();
+                                                            document.body.dataset.imagePreviewFinalGeometry = JSON.stringify({
+                                                              state: preview.dataset.state,
+                                                              hidden: preview.hidden,
+                                                              left: previewRect.left,
+                                                              top: previewRect.top,
+                                                              right: previewRect.right,
+                                                              bottom: previewRect.bottom,
+                                                              width: previewRect.width,
+                                                              height: previewRect.height,
+                                                              imageWidth: imageRect.width,
+                                                              imageHeight: imageRect.height,
+                                                              viewportWidth: window.innerWidth,
+                                                              viewportHeight: window.innerHeight
+                                                            });
+                                                            document.body.dataset.imagePreviewFinalObserved = 'true';
+                                                            dispatchPreviewPointer(cachedRow, 'pointerout');
+                                                            document.querySelector('#fileList .file-row--parent')?.click();
+                                                            waitFor(
+                                                              () => document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)}
+                                                                && [...document.querySelectorAll('#fileList .file-row')]
+                                                                  .some((row) => row.dataset.name === 'Documents'),
+                                                              () => {
+                                                                const documentsRow = [...document.querySelectorAll('#fileList .file-row')]
+                                                                  .find((row) => row.dataset.name === 'Documents');
+                                                                documentsRow.scrollIntoView({ block: 'end' });
+                                                                document.body.dataset.dotfilesScreenshotReady = 'true';
+                                                              }
+                                                            );
+                                                          }
+                                                        );
+                                                      }
+                                                    );
+                                                  }
+                                                );
                                               }
                                             );
                                           }
                                         );
-                                      }
-                                    );
-                                  }
-                                );
-                              }, 300);
+                                      }, 300);
+                                    }
+                                  );
+                                }
+                              );
                             }
                           );
                         }
@@ -1083,7 +1157,15 @@ function createWindow() {
             fileBrowserTabResumeObserved: document.body.dataset.fileBrowserTabResumeObserved === 'true',
             fileBrowserDragStarted: document.body.dataset.fileBrowserDragStarted === 'true',
             fileBrowserParentFirst: document.querySelector('#fileList .file-row:first-child')?.classList.contains('file-row--parent') || false,
+            dotfilesVisible: document.body.dataset.dotfilesVisible === 'true',
+            dotfilesToggleCount: Number(document.body.dataset.dotfilesToggleCount || 0),
+            dotfilesLiveFiltered: document.body.dataset.dotfilesLiveFiltered === 'true',
+            dotfilesShownObserved: document.body.dataset.dotfilesShownObserved === 'true',
+            dotfilesHiddenRestored: document.body.dataset.dotfilesHiddenRestored === 'true',
+            dotfilesScreenshotReady: document.body.dataset.dotfilesScreenshotReady === 'true',
+            dotfilesChip: document.getElementById('dotfilesToggle').textContent,
             imagePreviewVisible: document.body.dataset.imagePreviewVisible === 'true',
+            imagePreviewFinalObserved: document.body.dataset.imagePreviewFinalObserved === 'true',
             imagePreviewFirstObserved: document.body.dataset.imagePreviewFirstObserved === 'true',
             imagePreviewTooLargeObserved: document.body.dataset.imagePreviewTooLargeObserved === 'true',
             imagePreviewHiddenByDrag: document.body.dataset.imagePreviewHiddenByDrag === 'true',
@@ -1093,6 +1175,8 @@ function createWindow() {
             imagePreviewNaturalWidth: Number(document.body.dataset.imagePreviewNaturalWidth || 0),
             imagePreviewNaturalHeight: Number(document.body.dataset.imagePreviewNaturalHeight || 0),
             imagePreviewGeometry: (() => {
+              const captured = document.body.dataset.imagePreviewFinalGeometry;
+              if (captured) return JSON.parse(captured);
               const preview = document.getElementById('fileImagePreview');
               const image = document.getElementById('fileImagePreviewImage');
               const previewRect = preview.getBoundingClientRect();
@@ -1204,14 +1288,20 @@ function createWindow() {
             throw new Error('Independent SYSTEM/FILES visibility combinations or terminal refit are invalid');
           }
           if (!diagnostics.fileBrowserReady || diagnostics.fileBrowserMode !== 'browsing'
-            || diagnostics.fileBrowserCwdPath !== visualBrowserChild
+            || diagnostics.fileBrowserCwdPath !== visualBrowserRoot
             || diagnostics.fileCount < 1 || !diagnostics.fileBrowserParentFirst
             || !diagnostics.fileBrowserDescended || !diagnostics.fileBrowserAscended
             || !diagnostics.fileBrowserLiveResumed || !diagnostics.fileBrowserTabResumeObserved) {
             throw new Error('FILE SYSTEM LIVE/BROWSING navigation or parent-row behavior failed');
           }
+          if (diagnostics.dotfilesVisible || diagnostics.dotfilesToggleCount !== 2
+            || !diagnostics.dotfilesLiveFiltered || !diagnostics.dotfilesShownObserved
+            || !diagnostics.dotfilesHiddenRestored || !diagnostics.dotfilesScreenshotReady
+            || diagnostics.dotfilesChip !== 'DOTS HIDDEN') {
+            throw new Error('Dotfile filtering, visible count or Cmd+Shift+. toggle failed');
+          }
           const preview = diagnostics.imagePreviewGeometry;
-          if (!diagnostics.imagePreviewVisible || !diagnostics.imagePreviewFirstObserved
+          if (diagnostics.imagePreviewVisible || !diagnostics.imagePreviewFinalObserved || !diagnostics.imagePreviewFirstObserved
             || !diagnostics.imagePreviewTooLargeObserved || !diagnostics.imagePreviewHiddenByDrag
             || !diagnostics.imagePreviewCacheHit || diagnostics.imagePreviewRequestCount !== 2
             || diagnostics.imagePreviewDwellMs < 180
@@ -1252,7 +1342,7 @@ function createWindow() {
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            `edex-ui-bk-phase12-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
+            `edex-ui-bk-phase13-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);

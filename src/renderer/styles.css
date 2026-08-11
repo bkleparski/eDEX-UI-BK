@@ -1483,7 +1483,7 @@ body.files-group-hidden .files-section {
 .file-heading-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .file-mode-chip {
@@ -1507,6 +1507,23 @@ body.files-group-hidden .files-section {
   cursor: pointer;
   opacity: 1;
   text-shadow: 0 0 5px rgb(var(--cyan-bright-rgb) / .55);
+}
+
+.status-chip.dotfiles-chip {
+  border-color: transparent;
+  padding: 2px 3px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 7px !important;
+  letter-spacing: .04em !important;
+  opacity: .68;
+}
+
+.status-chip.dotfiles-chip.is-on {
+  border-color: rgb(var(--cyan-bright-rgb) / .62);
+  color: var(--cyan-bright);
+  background: rgb(var(--cyan-rgb) / .08);
+  opacity: 1;
 }
 
 .section-body {

@@ -35,7 +35,7 @@ const isSmokeTest = testMode === 'smoke';
 const isVisualTest = testMode === 'visual';
 const smokeMarker = '__EDEX_PTY_ARM64_OK__';
 const dropTestMarker = "__EDEX_DROP_OK__</tmp/eDEX drag one.txt></tmp/O'Brien [v2].log>";
-const panelDropTestMarker = "__EDEX_PANEL_DROP_OK__</private/tmp/edex-ui-bk-phase12-browser/O'Brien phase 11.txt>";
+const panelDropTestMarker = "__EDEX_PANEL_DROP_OK__</private/tmp/edex-ui-bk-phase13-browser/O'Brien phase 11.txt>";
 const dropTestMime = 'application/x-edex-ui-bk-test-paths';
 const internalFilePathMime = 'application/x-edex-ui-bk-file-path';
 const imagePreviewExtensions = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
@@ -57,6 +57,7 @@ let fileRefreshTimer = null;
 let fileRefreshInFlight = false;
 let fileBrowserMode = 'live';
 let browsedDirectory = null;
+let showHiddenFiles = false;
 let fileBrowserRequestId = 0;
 let imagePreviewTimer = null;
 let imagePreviewRequestToken = 0;
@@ -553,6 +554,28 @@ function updateFileBrowserMode(mode) {
   document.body.dataset.fileBrowserMode = fileBrowserMode;
 }
 
+function updateDotfilesState() {
+  const toggle = document.getElementById('dotfilesToggle');
+  toggle.textContent = showHiddenFiles ? 'DOTS SHOWN' : 'DOTS HIDDEN';
+  toggle.classList.toggle('is-on', showHiddenFiles);
+  toggle.setAttribute('aria-pressed', String(showHiddenFiles));
+  toggle.setAttribute('aria-label', showHiddenFiles ? 'Ukryj ukryte pliki' : 'Pokaz ukryte pliki');
+  toggle.title = showHiddenFiles ? 'HIDE DOTFILES (⌘⇧.)' : 'SHOW DOTFILES (⌘⇧.)';
+  document.body.dataset.dotfilesVisible = String(showHiddenFiles);
+}
+
+function toggleDotfiles() {
+  showHiddenFiles = !showHiddenFiles;
+  document.body.dataset.dotfilesToggleCount = String(
+    (Number(document.body.dataset.dotfilesToggleCount) || 0) + 1
+  );
+  fileBrowserRequestId += 1;
+  fileRefreshInFlight = false;
+  updateDotfilesState();
+  refreshFileBrowser();
+  focusTerminal();
+}
+
 function stopFileBrowserPolling() {
   if (fileRefreshTimer !== null) clearInterval(fileRefreshTimer);
   fileRefreshTimer = null;
@@ -645,7 +668,7 @@ async function refreshFileBrowser(directoryPath = null) {
   const requestId = ++fileBrowserRequestId;
   fileRefreshInFlight = true;
   try {
-    const result = await window.filesApi.list(requestedSessionId, requestedDirectory);
+    const result = await window.filesApi.list(requestedSessionId, requestedDirectory, showHiddenFiles);
     if (requestId !== fileBrowserRequestId || requestedSessionId !== activeSessionId
       || requestedMode !== fileBrowserMode) return;
     if (requestedMode === 'browsing' && result?.status === 'ok') browsedDirectory = result.cwd;
@@ -670,6 +693,7 @@ function browseDirectory(directoryPath) {
 function initializeFileBrowser() {
   const list = document.getElementById('fileList');
   const modeChip = document.getElementById('fileBrowserMode');
+  const dotfilesToggle = document.getElementById('dotfilesToggle');
 
   list.addEventListener('click', (event) => {
     const row = event.target.closest('.file-row');
@@ -723,12 +747,14 @@ function initializeFileBrowser() {
   modeChip.addEventListener('click', () => {
     if (fileBrowserMode === 'browsing') resumeLiveFileBrowser();
   });
+  dotfilesToggle.addEventListener('click', toggleDotfiles);
 
   list.addEventListener('scroll', () => hideImagePreview('scroll'), { passive: true });
   window.addEventListener('resize', positionImagePreview);
   window.addEventListener('blur', () => hideImagePreview('blur'));
 
   updateFileBrowserMode('live');
+  updateDotfilesState();
   startFileBrowserPolling();
   window.addEventListener('beforeunload', stopFileBrowserPolling, { once: true });
 }
@@ -1005,6 +1031,13 @@ function initializeControls() {
       event.preventDefault();
       event.stopPropagation();
       toggleSound();
+      return;
+    }
+    if (event.shiftKey && event.code === 'Period'
+      && !document.body.classList.contains('files-group-hidden')) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleDotfiles();
       return;
     }
     if (event.shiftKey) return;
