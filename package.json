@@ -2,12 +2,14 @@
   "name": "edex-ui-bk",
   "version": "0.1.0",
   "private": true,
+  "author": "Bartek Kleparski",
   "description": "Native Apple Silicon terminal for macOS inspired by futuristic HUD interfaces.",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "dist": "electron-builder --mac --arm64",
     "postinstall": "npm run rebuild:native",
-    "rebuild:native": "electron-rebuild -f -w node-pty --arch=arm64",
+    "rebuild:native": "electron-builder install-app-deps --arch=arm64",
     "test:smoke": "EDEX_SMOKE_TEST=1 electron .",
     "test:visual": "EDEX_VISUAL_TEST=1 electron ."
   },
@@ -22,7 +24,43 @@
     "systeminformation": "^5.33.1"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.2.0",
-    "electron": "^43.3.0"
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "pl.ebartnet.edex-ui-bk",
+    "productName": "eDEX-UI BK",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
   }
 }

@@ -506,6 +506,7 @@ function createWindow() {
               return { width: screen.width, height: screen.height };
             })()
           })`);
+          diagnostics.packaged = app.isPackaged;
           const screenshot = await window.webContents.capturePage();
           if (!diagnostics.monitoringReady || diagnostics.monitoringSamples < 2) {
             throw new Error('Monitoring did not provide at least two samples');
@@ -526,7 +527,10 @@ function createWindow() {
           if (diagnostics.terminalGeometry.width < 100 || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Active terminal has invalid geometry');
           }
-          const screenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-phase4.png');
+          const screenshotPath = path.join(
+            os.tmpdir(),
+            app.isPackaged ? 'edex-ui-bk-phase5-packaged.png' : 'edex-ui-bk-phase4.png'
+          );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
           console.log(`Visual test screenshot: ${screenshotPath}`);

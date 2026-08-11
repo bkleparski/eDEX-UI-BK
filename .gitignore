@@ -1,5 +1,9 @@
 node_modules/
 dist/
 out/
+build/*
+!build/icon-draft.png
+!build/icon.icns
+phase*-screenshot.png
 *.log
 .DS_Store
