@@ -1,6 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -19,6 +20,7 @@ const MONITOR_INTERVAL_MS = 1_000;
 const PROCESS_REFRESH_TICKS = 3;
 const DISK_REFRESH_TICKS = 10;
 const MAX_TERMINALS_PER_WINDOW = 8;
+const MAX_FILE_ENTRIES = 80;
 
 function isTrustedSender(event) {
   const senderUrl = event.senderFrame?.url;
@@ -57,6 +59,68 @@ function disposeTerminal(webContentsId, sessionId = null) {
   }
 
   if (clientTerminals.size === 0) terminals.delete(webContentsId);
+}
+
+function terminalWorkingDirectory(terminal) {
+  return new Promise((resolve, reject) => {
+    if (!terminal || !Number.isInteger(terminal.pid)) {
+      reject(new Error('Terminal process unavailable'));
+      return;
+    }
+
+    execFile('/usr/sbin/lsof', ['-a', '-p', String(terminal.pid), '-d', 'cwd', '-Fn'], {
+      timeout: 1_000,
+      maxBuffer: 64 * 1024
+    }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      const cwdLine = stdout.split('\n').find((line) => line.startsWith('n'));
+      if (!cwdLine?.slice(1)) {
+        reject(new Error('Terminal working directory unavailable'));
+        return;
+      }
+      resolve(cwdLine.slice(1));
+    });
+  });
+}
+
+async function listTerminalFiles(terminal, sessionId) {
+  try {
+    const cwd = await terminalWorkingDirectory(terminal);
+    const directoryEntries = await fs.promises.readdir(cwd, { withFileTypes: true });
+    const entries = directoryEntries
+      .map((entry) => ({
+        name: safeLabel(entry.name, 'UNKNOWN', 96),
+        type: entry.isDirectory() ? 'directory'
+          : entry.isSymbolicLink() ? 'link'
+            : entry.isFile() ? 'file' : 'other'
+      }))
+      .sort((left, right) => {
+        const leftDirectory = left.type === 'directory' ? 0 : 1;
+        const rightDirectory = right.type === 'directory' ? 0 : 1;
+        return leftDirectory - rightDirectory || left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+      });
+
+    return {
+      status: 'ok',
+      sessionId,
+      cwd: safeLabel(cwd, '/', 240),
+      entries: entries.slice(0, MAX_FILE_ENTRIES),
+      totalCount: entries.length,
+      truncated: entries.length > MAX_FILE_ENTRIES
+    };
+  } catch {
+    return {
+      status: 'error',
+      sessionId,
+      cwd: null,
+      entries: [],
+      totalCount: 0,
+      truncated: false
+    };
+  }
 }
 
 function finiteNumber(value, fallback = null) {
@@ -331,6 +395,19 @@ function registerTerminalIpc() {
   });
 }
 
+function registerFilesIpc() {
+  ipcMain.handle('files:list', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const sessionId = validSessionId(payload.sessionId);
+    if (!sessionId) throw new Error('Invalid terminal session ID.');
+    const terminal = terminals.get(event.sender.id)?.get(sessionId);
+    if (!terminal) {
+      return { status: 'error', sessionId, cwd: null, entries: [], totalCount: 0, truncated: false };
+    }
+    return listTerminalFiles(terminal, sessionId);
+  });
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -376,8 +453,13 @@ function createWindow() {
           press('Digit1');
           press('Digit2');
           press('Digit2');
+          press('Digit3');
           press('KeyL', true);
           press('KeyL', true);
+          if (document.body.dataset.soundEnabled === 'true') press('KeyS', true);
+          press('KeyS', true);
+          press('KeyS', true);
+          setTimeout(() => window.terminalApi.write('tty-02', 'cd /tmp\\r'), 600);
         })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
       }, 2_000);
 
@@ -403,6 +485,12 @@ function createWindow() {
             systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
             networkToggleCount: Number(document.body.dataset.networkToggleCount || 0),
             scanlinesToggleCount: Number(document.body.dataset.scanlinesToggleCount || 0),
+            soundEnabled: document.body.dataset.soundEnabled === 'true',
+            soundToggleCount: Number(document.body.dataset.soundToggleCount || 0),
+            rightPanelView: document.body.dataset.rightPanelView,
+            fileBrowserReady: document.body.dataset.fileBrowserReady === 'true',
+            fileBrowserCwd: document.getElementById('fileBrowserCwd').textContent,
+            fileCount: document.querySelectorAll('#fileList .file-row').length,
             shortcutCount: document.querySelectorAll('.shortcut-legend kbd').length,
             monitoringReady: document.body.dataset.monitoringReady === 'true',
             monitoringSamples: Number(document.body.dataset.monitoringSamples || 0),
@@ -425,15 +513,20 @@ function createWindow() {
           if (diagnostics.terminalSessionCount !== 2 || diagnostics.activeTerminal !== 'TTY 02') {
             throw new Error('Cmd+T did not create and activate the second PTY session');
           }
-          if (!diagnostics.systemPanelOn || !diagnostics.networkPanelOn || diagnostics.shortcutCount !== 4
+          if (!diagnostics.systemPanelOn || !diagnostics.networkPanelOn || diagnostics.shortcutCount !== 6
             || diagnostics.systemToggleCount !== 2 || diagnostics.networkToggleCount !== 2
-            || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled) {
+            || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
+            || diagnostics.soundToggleCount < 3 || diagnostics.soundEnabled) {
             throw new Error('HUD shortcut test did not restore the expected panel state');
+          }
+          if (diagnostics.rightPanelView !== 'files' || !diagnostics.fileBrowserReady
+            || !diagnostics.fileBrowserCwd.includes('tmp') || diagnostics.fileCount < 1) {
+            throw new Error('File browser did not follow the active PTY working directory');
           }
           if (diagnostics.terminalGeometry.width < 100 || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Active terminal has invalid geometry');
           }
-          const screenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-phase3.png');
+          const screenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-phase4.png');
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
           console.log(`Visual test screenshot: ${screenshotPath}`);
@@ -450,6 +543,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerTerminalIpc();
+  registerFilesIpc();
   registerMonitoringIpc();
   createWindow();
 

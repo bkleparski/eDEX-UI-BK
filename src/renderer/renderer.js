@@ -2,7 +2,8 @@
 
 const storageKeys = Object.freeze({
   skipBoot: 'edex-ui-bk.skipBoot',
-  scanlines: 'edex-ui-bk.scanlines'
+  scanlines: 'edex-ui-bk.scanlines',
+  sound: 'edex-ui-bk.sound'
 });
 
 const terminalTheme = Object.freeze({
@@ -41,6 +42,12 @@ let bootTimer;
 let bootActive = false;
 let smokeOutput = '';
 let smokeCompleted = false;
+let audioContext = null;
+let soundEnabled = false;
+let rightPanelView = 'network';
+let fileRefreshTimer = null;
+let fileRefreshInFlight = false;
+let lastNetworkInterface = 'INTERFACE --';
 const telemetryHistory = {
   cpu: [],
   networkDown: [],
@@ -180,7 +187,8 @@ function renderMonitoring(sample) {
 
   const down = sample.network?.downBytesPerSecond;
   const up = sample.network?.upBytesPerSecond;
-  document.getElementById('networkInterface').textContent = sample.network?.interface ? `INTERFACE ${sample.network.interface}` : 'INTERFACE N/A';
+  lastNetworkInterface = sample.network?.interface ? `INTERFACE ${sample.network.interface}` : 'INTERFACE N/A';
+  if (rightPanelView === 'network') document.getElementById('networkInterface').textContent = lastNetworkInterface;
   document.getElementById('networkDown').textContent = formatRate(down);
   document.getElementById('networkUp').textContent = formatRate(up);
   pushHistory(telemetryHistory.networkDown, down);
@@ -231,6 +239,175 @@ function writeSetting(key, enabled) {
   } catch {
     // The interface remains functional if storage is unavailable.
   }
+}
+
+function ensureAudioContext() {
+  if (!audioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    audioContext = new AudioContextClass();
+  }
+  if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+  return audioContext;
+}
+
+function playInputSound(data) {
+  if (!soundEnabled || typeof data !== 'string' || data.length === 0) return;
+  const context = ensureAudioContext();
+  if (!context || context.state === 'closed') return;
+
+  const enter = data === '\r' || data === '\n';
+  const now = context.currentTime;
+  const duration = enter ? 0.07 : 0.03 + Math.random() * 0.02;
+  const baseFrequency = enter ? 1_200 : 2_100 * (0.95 + Math.random() * 0.1);
+  const attack = enter ? 0.003 : 0.0025;
+  const volume = enter ? 0.07 : 0.05 + Math.random() * 0.02;
+  const main = context.createOscillator();
+  const harmonic = context.createOscillator();
+  const mainGain = context.createGain();
+  const harmonicGain = context.createGain();
+
+  main.type = enter ? 'sine' : 'triangle';
+  harmonic.type = 'sine';
+  main.frequency.setValueAtTime(baseFrequency, now);
+  harmonic.frequency.setValueAtTime(baseFrequency * 2, now);
+  mainGain.gain.setValueAtTime(0.0001, now);
+  mainGain.gain.exponentialRampToValueAtTime(volume, now + attack);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  harmonicGain.gain.setValueAtTime(0.0001, now);
+  harmonicGain.gain.exponentialRampToValueAtTime(volume * 0.25, now + attack);
+  harmonicGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  main.connect(mainGain).connect(context.destination);
+  harmonic.connect(harmonicGain).connect(context.destination);
+  main.start(now);
+  harmonic.start(now);
+  main.stop(now + duration + 0.01);
+  harmonic.stop(now + duration + 0.01);
+}
+
+function updateSound(enabled, activateAudio = true) {
+  soundEnabled = enabled;
+  document.body.dataset.soundToggleCount = String((Number(document.body.dataset.soundToggleCount) || 0) + 1);
+  document.body.dataset.soundEnabled = String(enabled);
+  document.getElementById('soundState').textContent = enabled ? 'ON' : 'OFF';
+  const toggle = document.getElementById('soundToggle');
+  toggle.setAttribute('aria-pressed', String(enabled));
+  toggle.classList.toggle('is-on', enabled);
+  writeSetting(storageKeys.sound, enabled);
+  if (enabled && activateAudio) ensureAudioContext();
+}
+
+function toggleSound() {
+  updateSound(!soundEnabled);
+  focusTerminal();
+}
+
+function initializeAudio() {
+  soundEnabled = readSetting(storageKeys.sound);
+  const unlock = () => {
+    if (soundEnabled) ensureAudioContext();
+    document.removeEventListener('pointerdown', unlock, true);
+    document.removeEventListener('keydown', unlock, true);
+  };
+  document.addEventListener('pointerdown', unlock, { capture: true, once: true });
+  document.addEventListener('keydown', unlock, { capture: true, once: true });
+  window.addEventListener('beforeunload', () => {
+    if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
+  }, { once: true });
+}
+
+function fileTypeMarker(type) {
+  if (type === 'directory') return '[D]';
+  if (type === 'link') return '[L]';
+  if (type === 'file') return '[F]';
+  return '[?]';
+}
+
+function renderFileBrowser(result) {
+  const list = document.getElementById('fileList');
+  list.replaceChildren();
+  const ready = result?.status === 'ok';
+  document.body.dataset.fileBrowserReady = String(ready);
+  document.getElementById('fileBrowserError').hidden = ready;
+  document.getElementById('fileBrowserSession').textContent = activeSessionId
+    ? activeSessionId.replace('tty-', 'TTY ')
+    : 'TTY --';
+  document.getElementById('fileBrowserCount').textContent = ready
+    ? `${result.totalCount}${result.truncated ? '+' : ''} ITEMS`
+    : '-- ITEMS';
+  const cwd = ready && result.cwd ? result.cwd : 'N/A';
+  const cwdNode = document.getElementById('fileBrowserCwd');
+  cwdNode.textContent = `CWD ${cwd}`;
+  cwdNode.title = ready && result.cwd ? result.cwd : '';
+
+  if (!ready) return;
+  if (!Array.isArray(result.entries) || result.entries.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'file-empty hud-label';
+    empty.textContent = 'DIRECTORY EMPTY';
+    list.append(empty);
+    return;
+  }
+
+  result.entries.forEach((entry) => {
+    const row = document.createElement('li');
+    row.className = `file-row file-row--${entry.type}`;
+    const marker = document.createElement('span');
+    marker.className = 'file-marker';
+    marker.textContent = fileTypeMarker(entry.type);
+    const name = document.createElement('span');
+    name.className = 'file-name';
+    name.textContent = `${entry.name}${entry.type === 'directory' ? '/' : ''}`;
+    name.title = entry.name;
+    row.append(marker, name);
+    list.append(row);
+  });
+}
+
+async function refreshFileBrowser() {
+  if (rightPanelView !== 'files' || document.body.classList.contains('network-panel-hidden') || fileRefreshInFlight) return;
+  const requestedSessionId = activeSessionId;
+  if (!requestedSessionId) {
+    renderFileBrowser(null);
+    return;
+  }
+
+  fileRefreshInFlight = true;
+  try {
+    const result = await window.filesApi.list(requestedSessionId);
+    if (requestedSessionId === activeSessionId && rightPanelView === 'files') renderFileBrowser(result);
+  } catch {
+    if (requestedSessionId === activeSessionId && rightPanelView === 'files') renderFileBrowser(null);
+  } finally {
+    fileRefreshInFlight = false;
+  }
+}
+
+function setRightPanelView(view) {
+  rightPanelView = view === 'files' ? 'files' : 'network';
+  const filesActive = rightPanelView === 'files';
+  document.getElementById('networkView').hidden = filesActive;
+  document.getElementById('filesView').hidden = !filesActive;
+  document.getElementById('networkViewTab').classList.toggle('is-active', !filesActive);
+  document.getElementById('filesViewTab').classList.toggle('is-active', filesActive);
+  document.getElementById('networkViewTab').setAttribute('aria-selected', String(!filesActive));
+  document.getElementById('filesViewTab').setAttribute('aria-selected', String(filesActive));
+  document.getElementById('networkInterface').textContent = filesActive ? 'READ ONLY' : lastNetworkInterface;
+  document.body.dataset.rightPanelView = rightPanelView;
+  if (filesActive) refreshFileBrowser();
+}
+
+function toggleFilesView() {
+  if (document.body.classList.contains('network-panel-hidden')) updatePanelVisibility('network', true);
+  setRightPanelView(rightPanelView === 'files' ? 'network' : 'files');
+  focusTerminal();
+}
+
+function initializeFileBrowser() {
+  document.getElementById('networkViewTab').addEventListener('click', () => setRightPanelView('network'));
+  document.getElementById('filesViewTab').addEventListener('click', () => setRightPanelView('files'));
+  fileRefreshTimer = setInterval(refreshFileBrowser, 1_500);
+  window.addEventListener('beforeunload', () => clearInterval(fileRefreshTimer), { once: true });
 }
 
 function focusTerminal() {
@@ -337,7 +514,9 @@ function updateClock() {
 
 function initializeControls() {
   updateScanlines(readSetting(storageKeys.scanlines));
+  updateSound(soundEnabled, false);
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
+  document.getElementById('soundToggle').addEventListener('click', toggleSound);
   document.getElementById('systemPanelToggle').addEventListener('click', () => togglePanel('system'));
   document.getElementById('networkPanelToggle').addEventListener('click', () => togglePanel('network'));
   updateClock();
@@ -352,6 +531,12 @@ function initializeControls() {
       toggleScanlines();
       return;
     }
+    if (event.shiftKey && event.code === 'KeyS') {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleSound();
+      return;
+    }
     if (event.shiftKey) return;
     if (event.code === 'Digit1') {
       event.preventDefault();
@@ -361,6 +546,10 @@ function initializeControls() {
       event.preventDefault();
       event.stopPropagation();
       togglePanel('network');
+    } else if (event.code === 'Digit3') {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFilesView();
     } else if (event.code === 'KeyT') {
       event.preventDefault();
       event.stopPropagation();
@@ -397,6 +586,7 @@ function switchTerminalSession(sessionId) {
     session.tab.tabIndex = active ? 0 : -1;
   }
   updateShellStatus();
+  if (rightPanelView === 'files') refreshFileBrowser();
   focusTerminal();
 }
 
@@ -457,7 +647,10 @@ async function createTerminalSession() {
     failed: false
   };
   terminalSessions.set(sessionId, session);
-  terminal.onData((data) => window.terminalApi.write(sessionId, data));
+  terminal.onData((data) => {
+    playInputSound(data);
+    window.terminalApi.write(sessionId, data);
+  });
   terminal.onResize(({ cols, rows }) => window.terminalApi.resize(sessionId, cols, rows));
   switchTerminalSession(sessionId);
 
@@ -516,8 +709,10 @@ async function initializeTerminal() {
   await createTerminalSession();
 }
 
+initializeAudio();
 initializeBoot();
 initializeControls();
+initializeFileBrowser();
 initializeMonitoring();
 initializeTerminal().catch((error) => {
   document.getElementById('shellStatus').dataset.state = 'offline';

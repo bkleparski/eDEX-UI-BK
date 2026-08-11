@@ -26,3 +26,7 @@ contextBridge.exposeInMainWorld('monitoringApi', Object.freeze({
   stop: () => ipcRenderer.send('monitoring:stop'),
   onData: (callback) => subscribe('monitoring:data', callback)
 }));
+
+contextBridge.exposeInMainWorld('filesApi', Object.freeze({
+  list: (sessionId) => ipcRenderer.invoke('files:list', { sessionId })
+}));

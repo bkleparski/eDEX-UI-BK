@@ -89,12 +89,15 @@
 
         <aside class="side-panel panel hud-frame boot-frame" id="networkPanel" aria-labelledby="networkPanelTitle">
           <div class="panel-content boot-content boot-content--right">
-            <header class="panel-heading">
-              <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
+            <header class="panel-heading panel-heading--switchable">
+              <div class="panel-tabs" id="rightPanelTabs" role="tablist" aria-label="Tryb prawego panelu">
+                <button class="panel-tab hud-title is-active" id="networkViewTab" type="button" role="tab" aria-selected="true" aria-controls="networkView">NETWORK</button>
+                <button class="panel-tab hud-title" id="filesViewTab" type="button" role="tab" aria-selected="false" aria-controls="filesView">FILES</button>
+              </div>
               <span class="hud-label" id="networkInterface">INTERFACE --</span>
             </header>
 
-            <div class="telemetry-stack telemetry-stack--right" aria-live="polite">
+            <div class="telemetry-stack telemetry-stack--right" id="networkView" role="tabpanel" aria-labelledby="networkViewTab" aria-live="polite">
               <section class="metric-block network-block" aria-labelledby="networkMetricTitle">
                 <span class="hud-label metric-section-label" id="networkMetricTitle">THROUGHPUT</span>
                 <div class="network-values">
@@ -137,6 +140,18 @@
 
               <div class="telemetry-error hud-label" id="networkError" hidden>NETWORK DATA N/A</div>
             </div>
+
+            <div class="file-browser" id="filesView" role="tabpanel" aria-labelledby="filesViewTab" hidden>
+              <div class="file-browser__meta">
+                <span class="hud-label" id="fileBrowserSession">TTY --</span>
+                <span class="hud-label" id="fileBrowserCount">-- ITEMS</span>
+              </div>
+              <div class="file-browser__cwd" id="fileBrowserCwd" title="">CWD / --</div>
+              <ol class="file-list" id="fileList" aria-live="polite">
+                <li class="file-empty hud-label">AWAITING PTY</li>
+              </ol>
+              <div class="telemetry-error hud-label" id="fileBrowserError" hidden>DIRECTORY DATA N/A</div>
+            </div>
           </div>
         </aside>
       </main>
@@ -147,13 +162,16 @@
           <div class="shortcut-legend hud-label" aria-label="Skróty klawiszowe">
             <span><kbd>⌘1</kbd> SYS</span>
             <span><kbd>⌘2</kbd> NET</span>
+            <span><kbd>⌘3</kbd> FILES</span>
             <span><kbd>⇧⌘L</kbd> SCAN</span>
-            <span><kbd>⌘T</kbd> NEW TTY</span>
+            <span><kbd>⇧⌘S</kbd> AUDIO</span>
+            <span><kbd>⌘T</kbd> TTY</span>
           </div>
           <div class="status-chips" aria-label="Stan interfejsu">
             <button class="status-chip hud-label is-on" id="systemPanelToggle" type="button" aria-pressed="true">SYS <span id="systemPanelState">ON</span></button>
             <button class="status-chip hud-label is-on" id="networkPanelToggle" type="button" aria-pressed="true">NET <span id="networkPanelState">ON</span></button>
             <button class="status-chip hud-label" id="scanlinesToggle" type="button" aria-pressed="false">SCANLINES <span id="scanlinesState">OFF</span></button>
+            <button class="status-chip hud-label" id="soundToggle" type="button" aria-pressed="false">SOUND <span id="soundState">OFF</span></button>
           </div>
         </div>
       </footer>
