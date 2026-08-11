@@ -109,6 +109,10 @@ function setMeter(id, percent) {
   document.getElementById(id).style.transform = `scaleX(${value === null ? 0 : Math.min(Math.max(value, 0), 100) / 100})`;
 }
 
+function setWarningState(element, enabled) {
+  element.classList.toggle('is-warning', enabled);
+}
+
 function renderCoreLoads(cores) {
   const container = document.getElementById('cpuCores');
   container.replaceChildren();
@@ -183,6 +187,20 @@ function renderMonitoring(sample) {
   document.getElementById('memoryUsed').textContent = formatCapacity(sample.memory?.usedBytes);
   document.getElementById('memoryAvailable').textContent = formatCapacity(sample.memory?.availableBytes);
   setMeter('memoryMeter', sample.memory?.usePercent);
+  setWarningState(document.getElementById('memoryValue'), numeric(sample.memory?.usePercent) > 90);
+
+  const hasBattery = sample.battery?.hasBattery === true;
+  const batteryPercent = numeric(sample.battery?.percent);
+  const charging = sample.battery?.isCharging === true;
+  document.body.dataset.batteryPresent = String(hasBattery);
+  document.getElementById('powerDivider').hidden = !hasBattery;
+  const powerStatus = document.getElementById('powerStatus');
+  powerStatus.hidden = !hasBattery;
+  if (hasBattery) {
+    document.getElementById('powerLabel').textContent = charging ? 'CHG' : 'PWR';
+    document.getElementById('batteryValue').textContent = formatPercent(batteryPercent, 0);
+    setWarningState(powerStatus, !charging && batteryPercent !== null && batteryPercent < 20);
+  }
 
   const down = sample.network?.downBytesPerSecond;
   const up = sample.network?.upBytesPerSecond;
@@ -195,14 +213,27 @@ function renderMonitoring(sample) {
   document.getElementById('networkDownSparkline').setAttribute('points', sparklinePoints(telemetryHistory.networkDown, 28, networkMaximum));
   document.getElementById('networkUpSparkline').setAttribute('points', sparklinePoints(telemetryHistory.networkUp, 28, networkMaximum));
 
+  const online = sample.connectivity?.state === 'online';
+  document.body.dataset.networkState = online ? 'online' : 'offline';
+  document.getElementById('networkLan').textContent = online && sample.connectivity?.lanIpv4 ? sample.connectivity.lanIpv4 : '—';
+  document.getElementById('networkPublic').textContent = online && sample.connectivity?.publicIpv4 ? sample.connectivity.publicIpv4 : '—';
+  document.getElementById('networkPing').textContent = online && numeric(sample.connectivity?.latencyMs) !== null
+    ? `${Math.round(sample.connectivity.latencyMs)}ms`
+    : '—';
+  const networkState = document.getElementById('networkState');
+  networkState.lastChild.textContent = online ? 'ONLINE' : 'OFFLINE';
+  networkState.classList.toggle('is-online', online);
+  networkState.classList.toggle('is-offline', !online);
+
   document.getElementById('diskValue').textContent = formatPercent(sample.disk?.usePercent, 0);
   document.getElementById('diskUsed').textContent = formatCapacity(sample.disk?.usedBytes);
   document.getElementById('diskAvailable').textContent = formatCapacity(sample.disk?.availableBytes);
   setMeter('diskMeter', sample.disk?.usePercent);
+  setWarningState(document.getElementById('diskSection'), numeric(sample.disk?.usePercent) > 90);
   renderProcesses(sample.processes);
 
   const systemUnavailable = !sample.cpu && !sample.memory;
-  const networkUnavailable = !sample.network && !sample.disk && (!sample.processes || sample.processes.length === 0);
+  const networkUnavailable = !sample.network && (!sample.processes || sample.processes.length === 0);
   document.getElementById('systemError').hidden = !systemUnavailable;
   document.getElementById('networkError').hidden = !networkUnavailable;
 }
@@ -549,6 +580,7 @@ function switchTerminalSession(sessionId) {
     session.tab.setAttribute('aria-selected', String(active));
     session.tab.tabIndex = active ? 0 : -1;
   }
+  window.terminalApi.setActive(sessionId);
   updateShellStatus();
   refreshFileBrowser();
   focusTerminal();
@@ -588,14 +620,35 @@ function handleTerminalExit(sessionId) {
   createTerminalSession().catch((error) => console.error('Terminal respawn failed:', error));
 }
 
-function createTerminalTab(sessionId, label) {
+function updateTerminalMetadata(updates) {
+  if (!Array.isArray(updates)) return;
+  updates.forEach((metadata) => {
+    const session = terminalSessions.get(metadata?.sessionId);
+    if (!session) return;
+    const context = typeof metadata.label === 'string' && metadata.label ? metadata.label : '~';
+    session.tab.querySelector('.tty-context').textContent = context;
+    session.tab.dataset.processName = metadata.processName || '';
+    session.tab.dataset.context = context;
+    session.tab.title = metadata.idle ? metadata.cwd || metadata.command || context : metadata.command || context;
+    if (metadata.processName === 'top') document.body.dataset.ttyTopObserved = 'true';
+  });
+}
+
+function createTerminalTab(sessionId, sessionNumber) {
   const tab = document.createElement('button');
   tab.className = 'tty-tab hud-label';
   tab.type = 'button';
   tab.id = `${sessionId}-tab`;
+  tab.dataset.sessionId = sessionId;
   tab.setAttribute('role', 'tab');
   tab.setAttribute('aria-controls', `${sessionId}-panel`);
-  tab.textContent = label;
+  const index = document.createElement('span');
+  index.className = 'tty-index';
+  index.textContent = String(sessionNumber).padStart(2, '0');
+  const context = document.createElement('span');
+  context.className = 'tty-context';
+  context.textContent = '~';
+  tab.append(index, context);
   tab.addEventListener('click', () => switchTerminalSession(sessionId));
   document.getElementById('ttyTabs').append(tab);
   return tab;
@@ -640,7 +693,7 @@ async function createTerminalSession() {
     terminal,
     fitAddon,
     container,
-    tab: createTerminalTab(sessionId, label),
+    tab: createTerminalTab(sessionId, sessionNumber),
     online: false,
     failed: false
   };
@@ -655,6 +708,7 @@ async function createTerminalSession() {
   try {
     await window.terminalApi.start(sessionId, { cols: terminal.cols, rows: terminal.rows });
     session.online = true;
+    window.terminalApi.setActive(sessionId);
     updateShellStatus();
     focusTerminal();
     if (isSmokeTest && sessionNumber === 1) {
@@ -687,6 +741,8 @@ async function initializeTerminal() {
       }
     }
   });
+
+  window.terminalApi.onMetadata(updateTerminalMetadata);
 
   window.terminalApi.onExit(({ sessionId }) => handleTerminalExit(sessionId));
 

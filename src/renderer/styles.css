@@ -1023,6 +1023,273 @@ body.booting .boot-content--bottom {
   }
 }
 
+/* Phase 7 must win over the Phase 6 sizing layer above. */
+.telemetry-column .time-meta {
+  gap: 7px;
+  font-size: 9px;
+  letter-spacing: .055em;
+}
+
+.telemetry-column .time-meta-divider {
+  width: 9px;
+}
+
+.telemetry-column .system-section {
+  flex-basis: 178px;
+}
+
+.telemetry-column .disk-section {
+  flex-basis: 64px;
+}
+
+.telemetry-column .network-section {
+  flex-basis: 278px;
+}
+
+.network-section .network-summary {
+  padding-block: 5px 3px;
+}
+
+.network-section .network-status-grid {
+  gap-block: 5px;
+  padding-block: 6px;
+}
+
+.network-section .sparkline--network {
+  height: 28px;
+  margin-top: 4px;
+}
+
+.network-section .network-values > div:nth-child(2),
+.network-section .network-values > div:last-child {
+  text-align: right;
+}
+
+.network-section .process-row:nth-child(n + 6) {
+  display: none;
+}
+
+.network-section .process-row {
+  padding-block: 2px;
+}
+
+@media (max-height: 860px) {
+  .telemetry-column .system-section {
+    flex-basis: 160px;
+  }
+
+  .telemetry-column .disk-section {
+    flex-basis: 58px;
+  }
+
+  .telemetry-column .network-section {
+    flex-basis: 238px;
+  }
+
+  .network-section .network-summary {
+    padding-block: 5px 3px;
+  }
+}
+
+/* Phase 7: contextual tabs and denser system/network instruments. */
+.tty-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  min-width: 0;
+  padding-inline: 7px;
+  font-family: var(--font-terminal);
+  font-size: 9px;
+  letter-spacing: .04em;
+  text-transform: none;
+}
+
+.tty-index {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 8px;
+  letter-spacing: .1em;
+}
+
+.tty-context {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tty-tab.is-active .tty-index {
+  color: var(--cyan-dim);
+}
+
+.tty-tab.is-active .tty-context {
+  color: var(--text-bright);
+}
+
+.time-meta {
+  gap: 7px;
+  font-size: 9px;
+  letter-spacing: .055em;
+}
+
+.time-meta-divider {
+  width: 9px;
+}
+
+.power-status.is-warning,
+.metric-value.is-warning,
+.disk-section.is-warning .metric-value,
+.disk-section.is-warning .metric-pairs strong {
+  color: var(--text-warning);
+  text-shadow: 0 0 3px rgb(var(--amber-rgb) / .28);
+}
+
+.system-section {
+  flex-basis: 178px;
+}
+
+.disk-section {
+  flex-basis: 64px;
+}
+
+.disk-heading {
+  min-height: 32px;
+  padding-block: 8px 5px;
+}
+
+.disk-heading .metric-value {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.disk-body {
+  padding-top: 1px;
+}
+
+.disk-section.is-warning .meter > span {
+  background: var(--amber);
+  box-shadow: 0 0 3px rgb(var(--amber-rgb) / .25);
+}
+
+.network-section {
+  flex-basis: 268px;
+}
+
+.network-status-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 7px 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgb(var(--cyan-dim-rgb) / .18);
+}
+
+.network-status-item {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.network-status-item:nth-child(even) {
+  text-align: right;
+}
+
+.network-status-item .hud-label {
+  font-size: 7px;
+  letter-spacing: .12em;
+}
+
+.network-status-item strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-terminal);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+}
+
+.network-status-item:nth-child(even) .network-state {
+  justify-content: flex-end;
+}
+
+.network-state > span {
+  width: 5px;
+  height: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.network-state.is-online {
+  color: var(--text-bright);
+  text-shadow: var(--glow-label);
+}
+
+.network-state.is-offline {
+  color: var(--text-warning);
+  text-shadow: 0 0 3px rgb(var(--amber-rgb) / .28);
+}
+
+.network-summary {
+  padding-block: 7px 5px;
+}
+
+.network-values > div:nth-child(2),
+.network-values > div:last-child {
+  text-align: right;
+}
+
+.network-values .metric-value--small {
+  font-size: 11px;
+}
+
+.process-row:nth-child(n + 6) {
+  display: none;
+}
+
+@media (max-height: 860px) {
+  .system-section {
+    flex-basis: 160px;
+  }
+
+  .disk-section {
+    flex-basis: 58px;
+  }
+
+  .disk-heading {
+    min-height: 27px;
+    padding-block: 6px 4px;
+  }
+
+  .disk-heading .metric-value {
+    font-size: 18px;
+  }
+
+  .network-section {
+    flex-basis: 238px;
+  }
+
+  .network-status-grid {
+    gap: 5px 12px;
+    padding-block: 6px;
+  }
+
+  .network-summary {
+    padding-block: 5px 3px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

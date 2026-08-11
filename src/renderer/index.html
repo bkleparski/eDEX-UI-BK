@@ -40,6 +40,8 @@
                 <time id="hudDate" datetime="">----</time>
                 <span class="time-meta-divider" aria-hidden="true"></span>
                 <span>UPTIME <strong id="uptimeValue">--</strong></span>
+                <span class="time-meta-divider power-divider" id="powerDivider" aria-hidden="true" hidden></span>
+                <span class="power-status" id="powerStatus" hidden><span id="powerLabel">PWR</span> <strong id="batteryValue">--</strong></span>
               </div>
             </section>
 
@@ -75,12 +77,44 @@
               </div>
             </section>
 
+            <section class="data-section disk-section" id="diskSection" aria-labelledby="diskSectionTitle">
+              <header class="section-heading disk-heading">
+                <h2 class="hud-title" id="diskSectionTitle">DISK</h2>
+                <span class="metric-value" id="diskValue">--</span>
+              </header>
+              <div class="disk-body">
+                <div class="meter" aria-hidden="true"><span id="diskMeter"></span></div>
+                <div class="metric-pairs hud-label">
+                  <span>USED <strong id="diskUsed">--</strong></span>
+                  <span>FREE <strong id="diskAvailable">--</strong></span>
+                </div>
+              </div>
+            </section>
+
             <section class="data-section network-section" aria-labelledby="networkPanelTitle">
               <header class="section-heading">
                 <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
                 <span class="hud-label" id="networkInterface">INTERFACE --</span>
               </header>
               <div class="section-body" aria-live="polite">
+                <div class="network-status-grid">
+                  <div class="network-status-item">
+                    <span class="hud-label">LAN</span>
+                    <strong id="networkLan">—</strong>
+                  </div>
+                  <div class="network-status-item">
+                    <span class="hud-label">PUB</span>
+                    <strong id="networkPublic">—</strong>
+                  </div>
+                  <div class="network-status-item">
+                    <span class="hud-label">STATE</span>
+                    <strong class="network-state is-offline" id="networkState"><span aria-hidden="true"></span>OFFLINE</strong>
+                  </div>
+                  <div class="network-status-item">
+                    <span class="hud-label">PING</span>
+                    <strong id="networkPing">—</strong>
+                  </div>
+                </div>
                 <div class="network-summary">
                   <div class="network-values">
                     <div>
@@ -91,20 +125,11 @@
                       <span class="hud-label">UP</span>
                       <strong class="metric-value metric-value--small" id="networkUp">--</strong>
                     </div>
-                    <div class="disk-compact">
-                      <span class="hud-label">DISK</span>
-                      <strong class="metric-value metric-value--small" id="diskValue">--</strong>
-                    </div>
                   </div>
                   <svg class="sparkline sparkline--network" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Historia transferu sieciowego">
                     <polyline class="sparkline-secondary" id="networkUpSparkline" points="0,28 100,28"></polyline>
                     <polyline id="networkDownSparkline" points="0,28 100,28"></polyline>
                   </svg>
-                  <div class="meter" aria-hidden="true"><span id="diskMeter"></span></div>
-                  <div class="metric-pairs hud-label disk-pairs">
-                    <span>USED <strong id="diskUsed">--</strong></span>
-                    <span>FREE <strong id="diskAvailable">--</strong></span>
-                  </div>
                 </div>
                 <div class="process-block" aria-labelledby="processMetricTitle">
                   <div class="metric-heading process-heading">

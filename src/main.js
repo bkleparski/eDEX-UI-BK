@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, net } = require('electron');
 const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -10,8 +10,10 @@ const si = require('systeminformation');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
+const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
 const isAutomatedTest = isSmokeTest || isVisualTest;
 const terminals = new Map();
+const terminalMetadataSessions = new Map();
 const monitoringSessions = new Map();
 let smokeTimeout;
 let gracefulShutdownStarted = false;
@@ -19,8 +21,15 @@ let gracefulShutdownStarted = false;
 const MONITOR_INTERVAL_MS = 1_000;
 const PROCESS_REFRESH_TICKS = 3;
 const DISK_REFRESH_TICKS = 10;
+const CONNECTIVITY_REFRESH_TICKS = 7;
+const BATTERY_REFRESH_TICKS = 30;
+const TERMINAL_METADATA_INTERVAL_MS = 500;
+const PUBLIC_IP_CACHE_MS = 5 * 60 * 1_000;
+const PUBLIC_IP_TIMEOUT_MS = 3_000;
+const PUBLIC_IP_ENDPOINT = 'https://api.ipify.org';
 const MAX_TERMINALS_PER_WINDOW = 8;
 const MAX_FILE_ENTRIES = 80;
+const publicIpCache = { value: null, expiresAt: 0, inFlight: null };
 
 function isTrustedSender(event) {
   const senderUrl = event.senderFrame?.url;
@@ -41,6 +50,13 @@ function validSessionId(value) {
   return typeof value === 'string' && /^tty-[0-9]{2}$/.test(value) ? value : null;
 }
 
+function disposeTerminalMetadata(webContentsId) {
+  const metadataSession = terminalMetadataSessions.get(webContentsId);
+  if (!metadataSession) return;
+  clearInterval(metadataSession.timer);
+  terminalMetadataSessions.delete(webContentsId);
+}
+
 function disposeTerminal(webContentsId, sessionId = null) {
   const clientTerminals = terminals.get(webContentsId);
   if (!clientTerminals) return;
@@ -58,7 +74,10 @@ function disposeTerminal(webContentsId, sessionId = null) {
     }
   }
 
-  if (clientTerminals.size === 0) terminals.delete(webContentsId);
+  if (clientTerminals.size === 0) {
+    terminals.delete(webContentsId);
+    disposeTerminalMetadata(webContentsId);
+  }
 }
 
 function terminalWorkingDirectory(terminal) {
@@ -84,6 +103,93 @@ function terminalWorkingDirectory(terminal) {
       resolve(cwdLine.slice(1));
     });
   });
+}
+
+function processIdentity(processTitle) {
+  const command = safeLabel(processTitle, 'zsh', 180);
+  const executable = command.trim().split(/\s+/)[0];
+  const name = path.basename(executable).replace(/^-/, '').toLowerCase() || 'zsh';
+  return { command, name, idle: /^(?:zsh|bash|sh|login)$/.test(name) };
+}
+
+function compactWorkingDirectory(cwd) {
+  if (typeof cwd !== 'string' || !cwd) return '~';
+  const home = os.homedir();
+  const displayPath = cwd === home ? '~' : cwd.startsWith(`${home}${path.sep}`) ? `~${cwd.slice(home.length)}` : cwd;
+  if (displayPath.length <= 20) return displayPath;
+  const segments = displayPath.split(path.sep).filter(Boolean);
+  return segments.slice(-2).join(path.sep) || displayPath;
+}
+
+async function collectTerminalMetadata(terminal, state, now) {
+  const processInfo = processIdentity(terminal.process);
+  if (processInfo.idle && (!state.cwd || now - state.cwdCheckedAt >= 1_000)) {
+    state.cwdCheckedAt = now;
+    try {
+      state.cwd = await terminalWorkingDirectory(terminal);
+    } catch {
+      // Preserve the last known directory if lsof is temporarily unavailable.
+    }
+  }
+
+  return {
+    processName: processInfo.name,
+    command: processInfo.command,
+    idle: processInfo.idle,
+    cwd: state.cwd || null,
+    label: processInfo.idle ? compactWorkingDirectory(state.cwd) : processInfo.name
+  };
+}
+
+async function publishTerminalMetadata(webContentsId) {
+  const metadataSession = terminalMetadataSessions.get(webContentsId);
+  const clientTerminals = terminals.get(webContentsId);
+  if (!metadataSession || metadataSession.inFlight || !clientTerminals || metadataSession.webContents.isDestroyed()) return;
+  metadataSession.inFlight = true;
+  const now = Date.now();
+  try {
+    const targets = [...clientTerminals.entries()].filter(([sessionId]) => (
+      sessionId === metadataSession.activeSessionId || metadataSession.tick % 3 === 0
+    ));
+    const updates = (await Promise.all(targets.map(async ([sessionId, terminal]) => {
+      try {
+        let state = metadataSession.states.get(sessionId);
+        if (!state) {
+          state = { cwd: null, cwdCheckedAt: 0 };
+          metadataSession.states.set(sessionId, state);
+        }
+        return { sessionId, ...(await collectTerminalMetadata(terminal, state, now)) };
+      } catch {
+        return null;
+      }
+    }))).filter(Boolean);
+    if (updates.length > 0 && !metadataSession.webContents.isDestroyed()) {
+      metadataSession.webContents.send('terminal:metadata', updates);
+    }
+    metadataSession.tick += 1;
+  } finally {
+    metadataSession.inFlight = false;
+  }
+}
+
+function ensureTerminalMetadataSession(webContents, activeSessionId) {
+  let metadataSession = terminalMetadataSessions.get(webContents.id);
+  if (!metadataSession) {
+    metadataSession = {
+      webContents,
+      activeSessionId,
+      timer: null,
+      inFlight: false,
+      tick: 0,
+      states: new Map()
+    };
+    terminalMetadataSessions.set(webContents.id, metadataSession);
+    metadataSession.timer = setInterval(() => publishTerminalMetadata(webContents.id), TERMINAL_METADATA_INTERVAL_MS);
+  } else {
+    metadataSession.activeSessionId = activeSessionId;
+  }
+  setTimeout(() => publishTerminalMetadata(webContents.id), 80);
+  return metadataSession;
 }
 
 async function listTerminalFiles(terminal, sessionId) {
@@ -139,16 +245,92 @@ function safeLabel(value, fallback = 'N/A', maxLength = 36) {
   return label ? label.slice(0, maxLength) : fallback;
 }
 
-async function collectNetworkMetric() {
-  let interfaceName = await si.networkInterfaceDefault();
+function isIpv4(value) {
+  if (typeof value !== 'string') return false;
+  const octets = value.trim().split('.');
+  return octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
 
-  if (!interfaceName) {
-    const interfaces = await si.networkInterfaces();
-    const preferred = interfaces.find((item) => item.default)
-      || interfaces.find((item) => !item.internal && !item.virtual && item.operstate === 'up')
-      || interfaces.find((item) => !item.internal && item.operstate === 'up');
-    interfaceName = preferred?.iface || '';
+async function activeNetworkInterface() {
+  const interfaces = await si.networkInterfaces();
+  const interfaceName = await si.networkInterfaceDefault();
+  const active = interfaces.find((item) => item.iface === interfaceName)
+    || interfaces.find((item) => item.default && isIpv4(item.ip4))
+    || interfaces.find((item) => !item.internal && !item.virtual && item.operstate === 'up' && isIpv4(item.ip4))
+    || interfaces.find((item) => !item.internal && item.operstate === 'up' && isIpv4(item.ip4));
+  return active || null;
+}
+
+async function fetchPublicIpv4() {
+  if (forceOfflineTest) return null;
+  const now = Date.now();
+  if (publicIpCache.value && publicIpCache.expiresAt > now) return publicIpCache.value;
+  if (publicIpCache.inFlight) return publicIpCache.inFlight;
+
+  publicIpCache.inFlight = (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PUBLIC_IP_TIMEOUT_MS);
+    try {
+      const response = await net.fetch(PUBLIC_IP_ENDPOINT, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: { accept: 'text/plain' }
+      });
+      if (!response.ok) return null;
+      const address = (await response.text()).trim();
+      if (!isIpv4(address)) return null;
+      publicIpCache.value = address;
+      publicIpCache.expiresAt = Date.now() + PUBLIC_IP_CACHE_MS;
+      return address;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      publicIpCache.inFlight = null;
+    }
+  })();
+
+  return publicIpCache.inFlight;
+}
+
+async function collectConnectivityMetric() {
+  if (forceOfflineTest) {
+    return { state: 'offline', interface: null, lanIpv4: null, publicIpv4: null, latencyMs: null };
   }
+
+  const [interfaceResult, publicIpResult, latencyResult] = await Promise.allSettled([
+    activeNetworkInterface(),
+    fetchPublicIpv4(),
+    si.inetLatency('1.1.1.1')
+  ]);
+  const active = interfaceResult.status === 'fulfilled' ? interfaceResult.value : null;
+  const publicIpv4 = publicIpResult.status === 'fulfilled' && isIpv4(publicIpResult.value) ? publicIpResult.value : null;
+  const rawLatency = latencyResult.status === 'fulfilled' ? finiteNumber(latencyResult.value) : null;
+  const latencyMs = rawLatency !== null && rawLatency >= 0 ? Math.round(rawLatency) : null;
+  const online = Boolean(publicIpv4 || latencyMs !== null);
+
+  return {
+    state: online ? 'online' : 'offline',
+    interface: online ? safeLabel(active?.iface, null, 18) : null,
+    lanIpv4: online && isIpv4(active?.ip4) ? active.ip4 : null,
+    publicIpv4: online ? publicIpv4 : null,
+    latencyMs: online ? latencyMs : null
+  };
+}
+
+async function collectBatteryMetric() {
+  const battery = await si.battery();
+  if (!battery?.hasBattery) return { hasBattery: false };
+  return {
+    hasBattery: true,
+    percent: clampPercent(battery.percent),
+    isCharging: battery.isCharging === true || battery.acConnected === true
+  };
+}
+
+async function collectNetworkMetric(preferredInterface = null) {
+  const activeInterface = preferredInterface ? null : await activeNetworkInterface();
+  const interfaceName = preferredInterface || activeInterface?.iface || '';
 
   const stats = await si.networkStats(interfaceName || undefined);
   const active = stats.find((item) => item.iface === interfaceName) || stats[0];
@@ -205,12 +387,16 @@ function rejectedMessage(result) {
 async function collectMonitoringSample(session) {
   const refreshProcesses = !session.cache.processes || session.tick % PROCESS_REFRESH_TICKS === 0;
   const refreshDisk = !session.cache.disk || session.tick % DISK_REFRESH_TICKS === 0;
-  const [cpuResult, memoryResult, networkResult, diskResult, processesResult] = await Promise.allSettled([
+  const refreshConnectivity = !session.cache.connectivity || session.tick % CONNECTIVITY_REFRESH_TICKS === 0;
+  const refreshBattery = !session.cache.battery || session.tick % BATTERY_REFRESH_TICKS === 0;
+  const [cpuResult, memoryResult, networkResult, diskResult, processesResult, connectivityResult, batteryResult] = await Promise.allSettled([
     si.currentLoad(),
     si.mem(),
-    collectNetworkMetric(),
+    collectNetworkMetric(session.cache.connectivity?.interface),
     refreshDisk ? collectDiskMetric() : Promise.resolve(session.cache.disk),
-    refreshProcesses ? collectProcessesMetric() : Promise.resolve(session.cache.processes)
+    refreshProcesses ? collectProcessesMetric() : Promise.resolve(session.cache.processes),
+    refreshConnectivity ? collectConnectivityMetric() : Promise.resolve(session.cache.connectivity),
+    refreshBattery ? collectBatteryMetric() : Promise.resolve(session.cache.battery)
   ]);
 
   const cpu = cpuResult.status === 'fulfilled' ? {
@@ -235,22 +421,28 @@ async function collectMonitoringSample(session) {
   const network = networkResult.status === 'fulfilled' ? networkResult.value : null;
   const disk = diskResult.status === 'fulfilled' ? diskResult.value : session.cache.disk;
   const processes = processesResult.status === 'fulfilled' ? processesResult.value : session.cache.processes;
+  const connectivity = connectivityResult.status === 'fulfilled' ? connectivityResult.value : session.cache.connectivity;
+  const battery = batteryResult.status === 'fulfilled' ? batteryResult.value : session.cache.battery;
   if (diskResult.status === 'fulfilled') session.cache.disk = disk;
   if (processesResult.status === 'fulfilled') session.cache.processes = processes;
+  if (connectivityResult.status === 'fulfilled') session.cache.connectivity = connectivity;
+  if (batteryResult.status === 'fulfilled') session.cache.battery = battery;
 
   const errors = {
     cpu: rejectedMessage(cpuResult),
     memory: rejectedMessage(memoryResult),
     network: rejectedMessage(networkResult),
     disk: rejectedMessage(diskResult),
-    processes: rejectedMessage(processesResult)
+    processes: rejectedMessage(processesResult),
+    connectivity: rejectedMessage(connectivityResult),
+    battery: rejectedMessage(batteryResult)
   };
   const errorCount = Object.values(errors).filter(Boolean).length;
   session.tick += 1;
 
   return {
     timestamp: Date.now(),
-    status: errorCount === 0 ? 'ok' : errorCount === 5 ? 'error' : 'partial',
+    status: errorCount === 0 ? 'ok' : errorCount === Object.keys(errors).length ? 'error' : 'partial',
     session: {
       hostname: safeLabel(os.hostname().replace(/\.local$/i, ''), 'LOCALHOST', 36),
       uptimeSeconds: Math.max(Math.floor(os.uptime()), 0)
@@ -258,6 +450,8 @@ async function collectMonitoringSample(session) {
     cpu,
     memory,
     network,
+    connectivity: connectivity || { state: 'offline', interface: null, lanIpv4: null, publicIpv4: null, latencyMs: null },
+    battery: battery || { hasBattery: false },
     disk: disk || null,
     processes: processes || [],
     errors
@@ -295,7 +489,7 @@ function registerMonitoringIpc() {
       timer: null,
       inFlight: false,
       tick: 0,
-      cache: { disk: null, processes: null }
+      cache: { disk: null, processes: null, connectivity: null, battery: null }
     };
     monitoringSessions.set(webContentsId, session);
     event.sender.once('destroyed', () => disposeMonitoring(webContentsId));
@@ -348,6 +542,7 @@ function registerTerminalIpc() {
     });
 
     clientTerminals.set(sessionId, terminal);
+    ensureTerminalMetadataSession(event.sender, sessionId).states.set(sessionId, { cwd: os.homedir(), cwdCheckedAt: 0 });
 
     terminal.onData((data) => {
       if (!event.sender.isDestroyed()) {
@@ -357,7 +552,12 @@ function registerTerminalIpc() {
 
     terminal.onExit(({ exitCode, signal }) => {
       clientTerminals.delete(sessionId);
-      if (clientTerminals.size === 0) terminals.delete(event.sender.id);
+      const metadataSession = terminalMetadataSessions.get(event.sender.id);
+      metadataSession?.states.delete(sessionId);
+      if (clientTerminals.size === 0) {
+        terminals.delete(event.sender.id);
+        disposeTerminalMetadata(event.sender.id);
+      }
       if (!event.sender.isDestroyed()) {
         event.sender.send('terminal:exit', { sessionId, exitCode, signal });
       }
@@ -379,6 +579,13 @@ function registerTerminalIpc() {
     const cols = Math.min(Math.max(payload.cols, 2), 500);
     const rows = Math.min(Math.max(payload.rows, 1), 300);
     terminals.get(event.sender.id)?.get(sessionId)?.resize(cols, rows);
+  });
+
+  ipcMain.on('terminal:set-active', (event, payload) => {
+    const sessionId = validSessionId(payload?.sessionId);
+    if (!isTrustedSender(event) || !sessionId || !terminals.get(event.sender.id)?.has(sessionId)) return;
+    const metadataSession = ensureTerminalMetadataSession(event.sender, sessionId);
+    metadataSession.activeSessionId = sessionId;
   });
 
   ipcMain.on('terminal:smoke-result', (event, result) => {
@@ -464,18 +671,24 @@ function createWindow() {
           if (document.body.dataset.soundEnabled === 'true') press('KeyS', true);
           press('KeyS', true);
           press('KeyS', true);
-          setTimeout(() => window.terminalApi.write('tty-02', 'exit\\r'), 500);
-          setTimeout(() => window.terminalApi.write('tty-01', 'exit\\r'), 1_300);
-          const changeRespawnedSessionDirectory = (attempt = 0) => {
-            const activeTab = document.querySelector('#ttyTabs .tty-tab.is-active')?.textContent;
-            const shellOnline = document.getElementById('shellStatusText').textContent === 'LINK ONLINE';
-            if (activeTab === 'TTY 03' && shellOnline) {
-              window.terminalApi.write('tty-03', 'cd /tmp\\r');
-            } else if (attempt < 20) {
-              setTimeout(() => changeRespawnedSessionDirectory(attempt + 1), 250);
-            }
+          const waitFor = (condition, action, attempt = 0) => {
+            if (condition()) action();
+            else if (attempt < 40) setTimeout(() => waitFor(condition, action, attempt + 1), 250);
           };
-          setTimeout(changeRespawnedSessionDirectory, 2_200);
+          waitFor(
+            () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-02'
+              && document.getElementById('shellStatusText').textContent === 'LINK ONLINE',
+            () => window.terminalApi.write('tty-02', '/usr/bin/top -l 2 -s 1 >/dev/null; exit\\r')
+          );
+          waitFor(
+            () => Number(document.body.dataset.terminalExitCount || 0) >= 1,
+            () => window.terminalApi.write('tty-01', 'exit\\r')
+          );
+          waitFor(
+            () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-03'
+              && document.getElementById('shellStatusText').textContent === 'LINK ONLINE',
+            () => window.terminalApi.write('tty-03', 'cd /tmp\\r')
+          );
         })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
       }, 2_000);
 
@@ -500,8 +713,14 @@ function createWindow() {
             date: document.getElementById('hudDate').textContent,
             clock: document.getElementById('hudClock').textContent.trim(),
             uptime: document.getElementById('uptimeValue').textContent,
+            batteryPresent: document.body.dataset.batteryPresent === 'true',
+            batteryHidden: document.getElementById('powerStatus').hidden,
+            batteryValue: document.getElementById('batteryValue').textContent,
+            batteryLabel: document.getElementById('powerLabel').textContent,
             terminalSessionCount: document.querySelectorAll('#ttyTabs .tty-tab').length,
-            activeTerminal: document.querySelector('#ttyTabs .tty-tab.is-active')?.textContent || null,
+            activeTerminal: document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId || null,
+            activeTerminalLabel: document.querySelector('#ttyTabs .tty-tab.is-active')?.textContent.trim() || null,
+            terminalTopObserved: document.body.dataset.ttyTopObserved === 'true',
             terminalExitCount: Number(document.body.dataset.terminalExitCount || 0),
             terminalRespawnCount: Number(document.body.dataset.terminalRespawnCount || 0),
             terminalOfflineMarker: document.querySelector('.terminal-instance:not([hidden])')?.textContent.includes('SHELL OFFLINE') || false,
@@ -520,8 +739,16 @@ function createWindow() {
             cpuValue: document.getElementById('cpuValue').textContent,
             memoryValue: document.getElementById('memoryValue').textContent,
             networkDown: document.getElementById('networkDown').textContent,
+            networkState: document.body.dataset.networkState,
+            networkLan: document.getElementById('networkLan').textContent,
+            networkPublic: document.getElementById('networkPublic').textContent,
+            networkPing: document.getElementById('networkPing').textContent,
             diskValue: document.getElementById('diskValue').textContent,
+            diskUsed: document.getElementById('diskUsed').textContent,
+            diskAvailable: document.getElementById('diskAvailable').textContent,
+            diskWarning: document.getElementById('diskSection').classList.contains('is-warning'),
             processCount: document.querySelectorAll('#processList .process-row').length,
+            cspLocked: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.includes("connect-src 'none'"),
             gridColumns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns,
             telemetryGeometry: (() => {
               const panel = document.getElementById('telemetryPanel').getBoundingClientRect();
@@ -552,7 +779,9 @@ function createWindow() {
             || diagnostics.windowMode.bounds.height !== 900) {
             throw new Error('Window did not start as a resizable 1440x900 macOS window');
           }
-          if (diagnostics.terminalSessionCount !== 1 || diagnostics.activeTerminal !== 'TTY 03'
+          if (diagnostics.terminalSessionCount !== 1 || diagnostics.activeTerminal !== 'tty-03'
+            || !diagnostics.activeTerminalLabel.includes('03') || !diagnostics.activeTerminalLabel.includes('tmp')
+            || !diagnostics.terminalTopObserved
             || diagnostics.terminalExitCount !== 2 || diagnostics.terminalRespawnCount !== 1
             || diagnostics.terminalOfflineMarker || diagnostics.shellStatus !== 'LINK ONLINE') {
             throw new Error('PTY exit lifecycle did not close tabs and respawn the final session');
@@ -566,6 +795,25 @@ function createWindow() {
           if (!diagnostics.fileBrowserReady || !diagnostics.fileBrowserCwd.includes('tmp') || diagnostics.fileCount < 1) {
             throw new Error('File browser did not follow the active PTY working directory');
           }
+          if (!diagnostics.cspLocked || diagnostics.diskValue === '--' || diagnostics.diskUsed === '--'
+            || diagnostics.diskAvailable === '--') {
+            throw new Error('Disk instrument or strict renderer CSP is not ready');
+          }
+          if (forceOfflineTest) {
+            if (diagnostics.networkState !== 'offline' || diagnostics.networkLan !== '—'
+              || diagnostics.networkPublic !== '—' || diagnostics.networkPing !== '—') {
+              throw new Error('Offline network degradation did not produce safe placeholders');
+            }
+          } else if (diagnostics.networkState !== 'online'
+            || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(diagnostics.networkLan)
+            || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(diagnostics.networkPublic)
+            || !/^\d+ms$/.test(diagnostics.networkPing)) {
+            throw new Error('LAN/public IPv4, state or ping monitoring is not ready');
+          }
+          if (diagnostics.batteryPresent === diagnostics.batteryHidden
+            || (diagnostics.batteryPresent && !/^\d+%$/.test(diagnostics.batteryValue))) {
+            throw new Error('Battery visibility does not match machine capabilities');
+          }
           if (diagnostics.telemetryGeometry.width < 320 || diagnostics.telemetryGeometry.width > 340
             || diagnostics.telemetryGeometry.columnScrollHeight > diagnostics.telemetryGeometry.columnClientHeight + 2
             || diagnostics.telemetryGeometry.fileListClientHeight < 30
@@ -574,7 +822,8 @@ function createWindow() {
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            app.isPackaged ? 'edex-ui-bk-phase6-packaged.png' : 'edex-ui-bk-phase6.png'
+            app.isPackaged ? 'edex-ui-bk-phase7-packaged.png'
+              : forceOfflineTest ? 'edex-ui-bk-phase7-offline.png' : 'edex-ui-bk-phase7.png'
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);
@@ -584,7 +833,7 @@ function createWindow() {
           process.exitCode = 1;
         }
         app.quit();
-      }, 10_500);
+      }, 13_500);
     });
   }
 }

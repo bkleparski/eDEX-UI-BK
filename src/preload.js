@@ -16,7 +16,9 @@ contextBridge.exposeInMainWorld('terminalApi', Object.freeze({
   start: (sessionId, dimensions) => ipcRenderer.invoke('terminal:start', { sessionId, ...dimensions }),
   write: (sessionId, data) => ipcRenderer.send('terminal:write', { sessionId, data }),
   resize: (sessionId, cols, rows) => ipcRenderer.send('terminal:resize', { sessionId, cols, rows }),
+  setActive: (sessionId) => ipcRenderer.send('terminal:set-active', { sessionId }),
   onData: (callback) => subscribe('terminal:data', callback),
+  onMetadata: (callback) => subscribe('terminal:metadata', callback),
   onExit: (callback) => subscribe('terminal:exit', callback),
   reportSmokeResult: (ok) => ipcRenderer.send('terminal:smoke-result', { ok: ok === true })
 }));
