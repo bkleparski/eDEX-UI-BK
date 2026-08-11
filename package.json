@@ -10,6 +10,8 @@
     "dist": "electron-builder --mac --arm64",
     "postinstall": "npm run rebuild:native",
     "rebuild:native": "electron-builder install-app-deps --arch=arm64",
+    "test:unit": "node --test test/**/*.test.js",
+    "test:providers:local": "node scripts/test-local-providers.js",
     "test:smoke": "EDEX_SMOKE_TEST=1 electron .",
     "test:visual": "EDEX_VISUAL_TEST=1 electron ."
   },
