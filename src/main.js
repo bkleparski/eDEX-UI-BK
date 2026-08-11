@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, net } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, net } = require('electron');
 const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -15,9 +15,12 @@ const isAutomatedTest = isSmokeTest || isVisualTest;
 const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
 const minimumVisualTerminalWidth = visualTestWidth < 1200 ? 500 : 850;
-const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase11-browser');
+const minimumVisualFileListHeight = visualTestHeight < 700 ? 24 : 30;
+const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase12-browser');
 const visualBrowserChild = path.join(visualBrowserRoot, 'child');
 const visualBrowserFile = path.join(visualBrowserRoot, "O'Brien phase 11.txt");
+const visualBrowserImage = path.join(visualBrowserChild, 'preview.svg');
+const visualBrowserLargeImage = path.join(visualBrowserChild, 'too-large.png');
 const terminals = new Map();
 const terminalMetadataSessions = new Map();
 const monitoringSessions = new Map();
@@ -35,7 +38,22 @@ const PUBLIC_IP_TIMEOUT_MS = 3_000;
 const PUBLIC_IP_ENDPOINT = 'https://api.ipify.org';
 const MAX_TERMINALS_PER_WINDOW = 8;
 const MAX_FILE_ENTRIES = 80;
+const IMAGE_PREVIEW_MAX_BYTES = 15 * 1024 * 1024;
+const IMAGE_PREVIEW_MAX_SOURCE_DIMENSION = 480;
+const IMAGE_PREVIEW_CACHE_LIMIT = 24;
+const IMAGE_PREVIEW_CACHE_MAX_BYTES = 48 * 1024 * 1024;
+const IMAGE_PREVIEW_MIME_TYPES = new Map([
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.webp', 'image/webp'],
+  ['.bmp', 'image/bmp'],
+  ['.svg', 'image/svg+xml']
+]);
 const publicIpCache = { value: null, expiresAt: 0, inFlight: null };
+const imagePreviewCache = new Map();
+let imagePreviewCacheBytes = 0;
 
 function isTrustedSender(event) {
   const senderUrl = event.senderFrame?.url;
@@ -202,6 +220,98 @@ function validDirectoryPath(value) {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4_096
     || value.includes('\0') || !path.isAbsolute(value)) return null;
   return path.resolve(value);
+}
+
+function cachedImagePreview(cacheKey) {
+  const cached = imagePreviewCache.get(cacheKey);
+  if (!cached) return null;
+  imagePreviewCache.delete(cacheKey);
+  imagePreviewCache.set(cacheKey, cached);
+  return cached.response;
+}
+
+function cacheImagePreview(cacheKey, response) {
+  const bytes = Buffer.byteLength(response.dataUri || '', 'utf8');
+  if (bytes > IMAGE_PREVIEW_CACHE_MAX_BYTES) return;
+  const existing = imagePreviewCache.get(cacheKey);
+  if (existing) imagePreviewCacheBytes -= existing.bytes;
+  imagePreviewCache.set(cacheKey, { response, bytes });
+  imagePreviewCacheBytes += bytes;
+  while (imagePreviewCache.size > IMAGE_PREVIEW_CACHE_LIMIT
+    || imagePreviewCacheBytes > IMAGE_PREVIEW_CACHE_MAX_BYTES) {
+    const oldestKey = imagePreviewCache.keys().next().value;
+    const oldest = imagePreviewCache.get(oldestKey);
+    imagePreviewCache.delete(oldestKey);
+    imagePreviewCacheBytes -= oldest.bytes;
+  }
+}
+
+async function readBoundedFile(fileHandle, size) {
+  const buffer = Buffer.allocUnsafe(size);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await fileHandle.read(buffer, offset, size - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return offset === size ? buffer : buffer.subarray(0, offset);
+}
+
+function imagePreviewData(buffer, mimeType) {
+  try {
+    const decoded = nativeImage.createFromBuffer(buffer);
+    if (!decoded.isEmpty()) {
+      const size = decoded.getSize();
+      const scale = Math.min(1, IMAGE_PREVIEW_MAX_SOURCE_DIMENSION / Math.max(size.width, size.height));
+      const preview = scale < 1
+        ? decoded.resize({
+          width: Math.max(1, Math.round(size.width * scale)),
+          height: Math.max(1, Math.round(size.height * scale)),
+          quality: 'good'
+        })
+        : decoded;
+      const previewSize = preview.getSize();
+      return { dataUri: preview.toDataURL(), width: previewSize.width, height: previewSize.height };
+    }
+  } catch {
+    // Chromium can still render supported image formats directly from a data URI.
+  }
+  return { dataUri: `data:${mimeType};base64,${buffer.toString('base64')}`, width: null, height: null };
+}
+
+async function previewImageFile(filePath) {
+  const normalizedPath = validDirectoryPath(filePath);
+  const mimeType = normalizedPath ? IMAGE_PREVIEW_MIME_TYPES.get(path.extname(normalizedPath).toLowerCase()) : null;
+  if (!normalizedPath || !mimeType) return { status: 'unsupported' };
+
+  let fileHandle;
+  try {
+    fileHandle = await fs.promises.open(normalizedPath, 'r');
+    const stats = await fileHandle.stat();
+    if (!stats.isFile()) return { status: 'unsupported' };
+    if (stats.size > IMAGE_PREVIEW_MAX_BYTES) {
+      return { status: 'too-large', maxBytes: IMAGE_PREVIEW_MAX_BYTES, size: stats.size };
+    }
+
+    const cacheKey = `${normalizedPath}\0${stats.size}\0${stats.mtimeMs}`;
+    const cached = cachedImagePreview(cacheKey);
+    if (cached) return cached;
+
+    const buffer = await readBoundedFile(fileHandle, stats.size);
+    const image = imagePreviewData(buffer, mimeType);
+    const response = {
+      status: 'ok',
+      ...image,
+      path: normalizedPath,
+      sourceBytes: buffer.length
+    };
+    cacheImagePreview(cacheKey, response);
+    return response;
+  } catch {
+    return { status: 'error' };
+  } finally {
+    await fileHandle?.close().catch(() => {});
+  }
 }
 
 async function listDirectoryFiles(cwd, sessionId) {
@@ -650,6 +760,11 @@ function registerFilesIpc() {
     }
     return listTerminalFiles(terminal, sessionId);
   });
+
+  ipcMain.handle('files:preview', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    return previewImageFile(payload.filePath);
+  });
 }
 
 function createWindow() {
@@ -657,6 +772,16 @@ function createWindow() {
     fs.mkdirSync(visualBrowserChild, { recursive: true });
     fs.writeFileSync(visualBrowserFile, 'phase 11 drag fixture\n');
     fs.writeFileSync(path.join(visualBrowserChild, 'inside.txt'), 'phase 11 browsing fixture\n');
+    fs.writeFileSync(visualBrowserImage, `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+      <rect width="320" height="180" fill="#02080a"/>
+      <path d="M0 135 L78 72 L132 108 L206 38 L320 126 V180 H0 Z" fill="#087f9c" opacity=".64"/>
+      <path d="M0 145 L78 82 L132 118 L206 48 L320 136" fill="none" stroke="#00e5ff" stroke-width="4"/>
+      <rect x="18" y="18" width="284" height="144" fill="none" stroke="#8ff8ff" stroke-width="2"/>
+      <text x="30" y="54" fill="#8ff8ff" font-family="monospace" font-size="22">EDEX PREVIEW</text>
+      <text x="30" y="78" fill="#00e5ff" font-family="monospace" font-size="12">PHASE 12 / 320x180</text>
+    </svg>`);
+    fs.writeFileSync(visualBrowserLargeImage, '');
+    fs.truncateSync(visualBrowserLargeImage, IMAGE_PREVIEW_MAX_BYTES + 1);
   }
 
   const window = new BrowserWindow({
@@ -739,6 +864,29 @@ function createWindow() {
             dispatch('drop');
             dispatch('dragend', row);
           };
+          const dispatchPreviewPointer = (row, type = 'pointerover') => {
+            const rect = row.getBoundingClientRect();
+            row.dispatchEvent(new PointerEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              clientX: rect.right - 8,
+              clientY: rect.top + (rect.height / 2),
+              relatedTarget: null
+            }));
+          };
+          const dispatchPreviewDragCycle = (row) => {
+            const transfer = new DataTransfer();
+            row.dispatchEvent(new DragEvent('dragstart', {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer
+            }));
+            row.dispatchEvent(new DragEvent('dragend', {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer
+            }));
+          };
           press('KeyT');
           press('Digit1');
           setTimeout(() => press('Digit2'), 250);
@@ -817,6 +965,45 @@ function createWindow() {
                                 const liveChild = [...document.querySelectorAll('#fileList .file-row')]
                                   .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
                                 liveChild?.click();
+                                waitFor(
+                                  () => document.body.dataset.fileBrowserMode === 'browsing'
+                                    && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserChild)}
+                                    && [...document.querySelectorAll('#fileList .file-row')]
+                                      .some((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)}),
+                                  () => {
+                                    const largeRow = [...document.querySelectorAll('#fileList .file-row')]
+                                      .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserLargeImage)});
+                                    dispatchPreviewPointer(largeRow);
+                                    waitFor(
+                                      () => document.getElementById('fileImagePreview').dataset.state === 'message'
+                                        && document.getElementById('fileImagePreviewMessage').textContent === 'FILE TOO LARGE',
+                                      () => {
+                                        document.body.dataset.imagePreviewTooLargeObserved = 'true';
+                                        dispatchPreviewPointer(largeRow, 'pointerout');
+                                        const previewRow = [...document.querySelectorAll('#fileList .file-row')]
+                                          .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)});
+                                        dispatchPreviewPointer(previewRow);
+                                        waitFor(
+                                          () => document.body.dataset.imagePreviewVisible === 'true'
+                                            && document.getElementById('fileImagePreview').dataset.state === 'image',
+                                          () => {
+                                            document.body.dataset.imagePreviewFirstObserved = 'true';
+                                            dispatchPreviewDragCycle(previewRow);
+                                            waitFor(
+                                              () => document.body.dataset.imagePreviewHiddenByDrag === 'true'
+                                                && document.body.dataset.imagePreviewVisible === 'false',
+                                              () => {
+                                                const cachedRow = [...document.querySelectorAll('#fileList .file-row')]
+                                                  .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserImage)});
+                                                dispatchPreviewPointer(cachedRow);
+                                              }
+                                            );
+                                          }
+                                        );
+                                      }
+                                    );
+                                  }
+                                );
                               }, 300);
                             }
                           );
@@ -896,6 +1083,35 @@ function createWindow() {
             fileBrowserTabResumeObserved: document.body.dataset.fileBrowserTabResumeObserved === 'true',
             fileBrowserDragStarted: document.body.dataset.fileBrowserDragStarted === 'true',
             fileBrowserParentFirst: document.querySelector('#fileList .file-row:first-child')?.classList.contains('file-row--parent') || false,
+            imagePreviewVisible: document.body.dataset.imagePreviewVisible === 'true',
+            imagePreviewFirstObserved: document.body.dataset.imagePreviewFirstObserved === 'true',
+            imagePreviewTooLargeObserved: document.body.dataset.imagePreviewTooLargeObserved === 'true',
+            imagePreviewHiddenByDrag: document.body.dataset.imagePreviewHiddenByDrag === 'true',
+            imagePreviewCacheHit: document.body.dataset.imagePreviewCacheHit === 'true',
+            imagePreviewRequestCount: Number(document.body.dataset.imagePreviewRequestCount || 0),
+            imagePreviewDwellMs: Number(document.body.dataset.imagePreviewDwellMs || 0),
+            imagePreviewNaturalWidth: Number(document.body.dataset.imagePreviewNaturalWidth || 0),
+            imagePreviewNaturalHeight: Number(document.body.dataset.imagePreviewNaturalHeight || 0),
+            imagePreviewGeometry: (() => {
+              const preview = document.getElementById('fileImagePreview');
+              const image = document.getElementById('fileImagePreviewImage');
+              const previewRect = preview.getBoundingClientRect();
+              const imageRect = image.getBoundingClientRect();
+              return {
+                state: preview.dataset.state,
+                hidden: preview.hidden,
+                left: previewRect.left,
+                top: previewRect.top,
+                right: previewRect.right,
+                bottom: previewRect.bottom,
+                width: previewRect.width,
+                height: previewRect.height,
+                imageWidth: imageRect.width,
+                imageHeight: imageRect.height,
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight
+              };
+            })(),
             shortcutCount: document.querySelectorAll('.shortcut-legend kbd').length,
             monitoringReady: document.body.dataset.monitoringReady === 'true',
             monitoringSamples: Number(document.body.dataset.monitoringSamples || 0),
@@ -913,6 +1129,7 @@ function createWindow() {
             diskWarning: document.getElementById('diskSection').classList.contains('is-warning'),
             processCount: document.querySelectorAll('#processList .process-row').length,
             cspLocked: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.includes("connect-src 'none'"),
+            cspImageDataOnly: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.includes("img-src 'self' data:"),
             gridColumns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns,
             telemetryGeometry: (() => {
               const panel = document.getElementById('telemetryPanel').getBoundingClientRect();
@@ -993,7 +1210,21 @@ function createWindow() {
             || !diagnostics.fileBrowserLiveResumed || !diagnostics.fileBrowserTabResumeObserved) {
             throw new Error('FILE SYSTEM LIVE/BROWSING navigation or parent-row behavior failed');
           }
-          if (!diagnostics.cspLocked || diagnostics.diskValue === '--' || diagnostics.diskUsed === '--'
+          const preview = diagnostics.imagePreviewGeometry;
+          if (!diagnostics.imagePreviewVisible || !diagnostics.imagePreviewFirstObserved
+            || !diagnostics.imagePreviewTooLargeObserved || !diagnostics.imagePreviewHiddenByDrag
+            || !diagnostics.imagePreviewCacheHit || diagnostics.imagePreviewRequestCount !== 2
+            || diagnostics.imagePreviewDwellMs < 180
+            || diagnostics.imagePreviewNaturalWidth !== 320 || diagnostics.imagePreviewNaturalHeight !== 180
+            || preview.hidden || preview.state !== 'image'
+            || preview.imageWidth < 150 || preview.imageWidth > 240 || preview.imageHeight < 80 || preview.imageHeight > 220
+            || preview.width > 258 || preview.height > 260
+            || preview.left < 0 || preview.top < 0
+            || preview.right > preview.viewportWidth || preview.bottom > preview.viewportHeight) {
+            throw new Error('Image hover preview debounce, cache, drag hiding, dimensions or viewport clamping failed');
+          }
+          if (!diagnostics.cspLocked || !diagnostics.cspImageDataOnly
+            || diagnostics.diskValue === '--' || diagnostics.diskUsed === '--'
             || diagnostics.diskAvailable === '--') {
             throw new Error('Disk instrument or strict renderer CSP is not ready');
           }
@@ -1014,14 +1245,14 @@ function createWindow() {
           }
           if (diagnostics.telemetryGeometry.width < 320 || diagnostics.telemetryGeometry.width > 340
             || diagnostics.telemetryGeometry.columnScrollHeight > diagnostics.telemetryGeometry.columnClientHeight + 2
-            || diagnostics.telemetryGeometry.fileListClientHeight < 30
+            || diagnostics.telemetryGeometry.fileListClientHeight < minimumVisualFileListHeight
             || diagnostics.telemetryGeometry.diskDetailsClearance < 6
             || diagnostics.terminalGeometry.width < minimumVisualTerminalWidth || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Two-column layout has invalid geometry or scroll ownership');
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            `edex-ui-bk-phase11-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
+            `edex-ui-bk-phase12-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);

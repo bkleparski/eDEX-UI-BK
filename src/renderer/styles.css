@@ -1666,6 +1666,50 @@ body.files-group-hidden .files-section {
   opacity: .48;
 }
 
+.file-image-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 120;
+  max-width: 256px;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--cyan-bright-rgb) / .72);
+  background: rgb(2 8 10 / .96);
+  box-shadow:
+    0 0 8px rgb(var(--cyan-rgb) / .24),
+    inset 0 0 5px rgb(var(--cyan-rgb) / .08);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.file-image-preview img {
+  display: block;
+  max-width: 240px;
+  max-height: 220px;
+  object-fit: contain;
+  background: rgb(0 0 0 / .46);
+}
+
+.file-image-preview__label {
+  max-width: 240px;
+  padding-top: 6px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-terminal);
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-image-preview__message {
+  min-width: 132px;
+  padding: 18px 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
 body.file-browser-dragging,
 body.file-browser-dragging * {
   cursor: grabbing !important;

@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('monitoringApi', Object.freeze({
 
 contextBridge.exposeInMainWorld('filesApi', Object.freeze({
   list: (sessionId, directoryPath = null) => ipcRenderer.invoke('files:list', { sessionId, directoryPath }),
+  preview: (filePath) => ipcRenderer.invoke('files:preview', { filePath }),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   pathForDropSupported: typeof webUtils?.getPathForFile === 'function'
 }));

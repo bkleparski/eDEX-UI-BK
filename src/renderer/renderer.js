@@ -35,9 +35,14 @@ const isSmokeTest = testMode === 'smoke';
 const isVisualTest = testMode === 'visual';
 const smokeMarker = '__EDEX_PTY_ARM64_OK__';
 const dropTestMarker = "__EDEX_DROP_OK__</tmp/eDEX drag one.txt></tmp/O'Brien [v2].log>";
-const panelDropTestMarker = "__EDEX_PANEL_DROP_OK__</private/tmp/edex-ui-bk-phase11-browser/O'Brien phase 11.txt>";
+const panelDropTestMarker = "__EDEX_PANEL_DROP_OK__</private/tmp/edex-ui-bk-phase12-browser/O'Brien phase 11.txt>";
 const dropTestMime = 'application/x-edex-ui-bk-test-paths';
 const internalFilePathMime = 'application/x-edex-ui-bk-file-path';
+const imagePreviewExtensions = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
+const imagePreviewDwellMs = 200;
+const imagePreviewCacheLimit = 24;
+const imagePreviewCacheTtlMs = 60_000;
+const imagePreviewCacheMaxChars = 48 * 1024 * 1024;
 const maxTerminalSessions = 8;
 const terminalSessions = new Map();
 let activeSessionId = null;
@@ -53,6 +58,12 @@ let fileRefreshInFlight = false;
 let fileBrowserMode = 'live';
 let browsedDirectory = null;
 let fileBrowserRequestId = 0;
+let imagePreviewTimer = null;
+let imagePreviewRequestToken = 0;
+let imagePreviewHoverStartedAt = 0;
+let imagePreviewPath = null;
+let imagePreviewCursorX = 0;
+let imagePreviewCursorY = 0;
 let fileDragDepth = 0;
 let dropTestOutput = '';
 let rendererShuttingDown = false;
@@ -61,6 +72,8 @@ const telemetryHistory = {
   networkDown: [],
   networkUp: []
 };
+const imagePreviewCache = new Map();
+let imagePreviewCacheChars = 0;
 
 function numeric(value) {
   const number = Number(value);
@@ -361,6 +374,172 @@ function fileTypeMarker(type) {
   return '[?]';
 }
 
+function isPreviewableImage(entry) {
+  return entry?.type === 'file' && imagePreviewExtensions.test(entry.fullPath || '');
+}
+
+function cachedImagePreview(filePath) {
+  const cached = imagePreviewCache.get(filePath);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    imagePreviewCache.delete(filePath);
+    imagePreviewCacheChars -= cached.chars;
+    return null;
+  }
+  imagePreviewCache.delete(filePath);
+  imagePreviewCache.set(filePath, cached);
+  return cached.response;
+}
+
+function cacheImagePreview(filePath, response) {
+  const chars = typeof response?.dataUri === 'string' ? response.dataUri.length : 128;
+  if (chars > imagePreviewCacheMaxChars) return;
+  const existing = imagePreviewCache.get(filePath);
+  if (existing) imagePreviewCacheChars -= existing.chars;
+  imagePreviewCache.set(filePath, { response, chars, expiresAt: Date.now() + imagePreviewCacheTtlMs });
+  imagePreviewCacheChars += chars;
+  while (imagePreviewCache.size > imagePreviewCacheLimit || imagePreviewCacheChars > imagePreviewCacheMaxChars) {
+    const oldestPath = imagePreviewCache.keys().next().value;
+    const oldest = imagePreviewCache.get(oldestPath);
+    imagePreviewCache.delete(oldestPath);
+    imagePreviewCacheChars -= oldest.chars;
+  }
+}
+
+function positionImagePreview() {
+  const preview = document.getElementById('fileImagePreview');
+  if (preview.hidden) return;
+  const margin = 8;
+  const offset = 16;
+  const rect = preview.getBoundingClientRect();
+  let left = imagePreviewCursorX + offset;
+  let top = imagePreviewCursorY + offset;
+  if (left + rect.width > window.innerWidth - margin) left = imagePreviewCursorX - rect.width - offset;
+  if (top + rect.height > window.innerHeight - margin) top = imagePreviewCursorY - rect.height - offset;
+  left = Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - rect.width - margin));
+  top = Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - rect.height - margin));
+  preview.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+}
+
+function hideImagePreview(reason = 'leave') {
+  const preview = document.getElementById('fileImagePreview');
+  const image = document.getElementById('fileImagePreviewImage');
+  const wasActive = imagePreviewPath !== null || !preview.hidden;
+  clearTimeout(imagePreviewTimer);
+  imagePreviewTimer = null;
+  imagePreviewRequestToken += 1;
+  imagePreviewPath = null;
+  image.onload = null;
+  image.onerror = null;
+  image.removeAttribute('src');
+  image.hidden = true;
+  preview.hidden = true;
+  preview.setAttribute('aria-hidden', 'true');
+  preview.dataset.state = 'hidden';
+  document.body.dataset.imagePreviewVisible = 'false';
+  if (reason === 'drag' && wasActive) document.body.dataset.imagePreviewHiddenByDrag = 'true';
+}
+
+function showImagePreviewMessage(message, fileName, requestToken) {
+  if (requestToken !== imagePreviewRequestToken || !imagePreviewPath) return;
+  const preview = document.getElementById('fileImagePreview');
+  const image = document.getElementById('fileImagePreviewImage');
+  const messageNode = document.getElementById('fileImagePreviewMessage');
+  image.hidden = true;
+  messageNode.hidden = false;
+  messageNode.textContent = message;
+  document.getElementById('fileImagePreviewLabel').textContent = fileName;
+  preview.dataset.state = 'message';
+  preview.hidden = false;
+  preview.setAttribute('aria-hidden', 'false');
+  document.body.dataset.imagePreviewVisible = 'true';
+  requestAnimationFrame(positionImagePreview);
+}
+
+function showImagePreviewImage(response, fileName, requestToken) {
+  if (requestToken !== imagePreviewRequestToken || !imagePreviewPath
+    || typeof response.dataUri !== 'string' || !response.dataUri.startsWith('data:image/')) return;
+  const preview = document.getElementById('fileImagePreview');
+  const image = document.getElementById('fileImagePreviewImage');
+  const messageNode = document.getElementById('fileImagePreviewMessage');
+  image.onload = () => {
+    if (requestToken !== imagePreviewRequestToken || !imagePreviewPath) return;
+    messageNode.hidden = true;
+    image.hidden = false;
+    document.getElementById('fileImagePreviewLabel').textContent = fileName;
+    preview.dataset.state = 'image';
+    preview.hidden = false;
+    preview.setAttribute('aria-hidden', 'false');
+    document.body.dataset.imagePreviewVisible = 'true';
+    document.body.dataset.imagePreviewNaturalWidth = String(image.naturalWidth);
+    document.body.dataset.imagePreviewNaturalHeight = String(image.naturalHeight);
+    requestAnimationFrame(positionImagePreview);
+  };
+  image.onerror = () => {
+    if (requestToken === imagePreviewRequestToken) hideImagePreview('decode-error');
+  };
+  image.src = response.dataUri;
+}
+
+function presentImagePreview(response, fileName, requestToken) {
+  if (response?.status === 'ok') {
+    showImagePreviewImage(response, fileName, requestToken);
+  } else if (response?.status === 'too-large') {
+    showImagePreviewMessage('FILE TOO LARGE', fileName, requestToken);
+  } else if (requestToken === imagePreviewRequestToken) {
+    hideImagePreview('unavailable');
+  }
+}
+
+function scheduleImagePreview(row, clientX, clientY) {
+  const filePath = row?.dataset.path;
+  if (!filePath || row.dataset.previewable !== 'true') return;
+  clearTimeout(imagePreviewTimer);
+  imagePreviewRequestToken += 1;
+  const requestToken = imagePreviewRequestToken;
+  imagePreviewPath = filePath;
+  imagePreviewCursorX = clientX;
+  imagePreviewCursorY = clientY;
+  imagePreviewHoverStartedAt = Date.now();
+  imagePreviewTimer = setTimeout(async () => {
+    imagePreviewTimer = null;
+    if (requestToken !== imagePreviewRequestToken || imagePreviewPath !== filePath) return;
+    document.body.dataset.imagePreviewDwellMs = String(Date.now() - imagePreviewHoverStartedAt);
+    const cached = cachedImagePreview(filePath);
+    if (cached) {
+      document.body.dataset.imagePreviewCacheHit = 'true';
+      presentImagePreview(cached, row.dataset.name, requestToken);
+      return;
+    }
+    document.body.dataset.imagePreviewRequestCount = String(
+      (Number(document.body.dataset.imagePreviewRequestCount) || 0) + 1
+    );
+    try {
+      const response = await window.filesApi.preview(filePath);
+      if (response?.status === 'ok' || response?.status === 'too-large') cacheImagePreview(filePath, response);
+      presentImagePreview(response, row.dataset.name, requestToken);
+    } catch {
+      if (requestToken === imagePreviewRequestToken) hideImagePreview('ipc-error');
+    }
+  }, imagePreviewDwellMs);
+}
+
+function reconcileImagePreviewRow(list) {
+  if (!imagePreviewPath) return;
+  const replacement = [...list.querySelectorAll('.file-row[data-previewable="true"]')]
+    .find((row) => row.dataset.path === imagePreviewPath);
+  if (!replacement) {
+    hideImagePreview('listing-changed');
+    return;
+  }
+  const rect = replacement.getBoundingClientRect();
+  if (imagePreviewCursorX < rect.left || imagePreviewCursorX > rect.right
+    || imagePreviewCursorY < rect.top || imagePreviewCursorY > rect.bottom) {
+    hideImagePreview('pointer-left');
+    return;
+  }
+}
+
 function updateFileBrowserMode(mode) {
   fileBrowserMode = mode === 'browsing' ? 'browsing' : 'live';
   const browsing = fileBrowserMode === 'browsing';
@@ -410,13 +589,17 @@ function renderFileBrowser(result) {
   cwdNode.textContent = `CWD ${cwd}`;
   cwdNode.title = ready && result.cwd ? result.cwd : '';
 
-  if (!ready) return;
+  if (!ready) {
+    hideImagePreview('listing-unavailable');
+    return;
+  }
   const entries = Array.isArray(result.entries) ? [...result.entries] : [];
   if (result.parentPath) {
     entries.unshift({ name: '..', fullPath: result.parentPath, type: 'directory', parent: true });
   }
 
   if (entries.length === 0) {
+    hideImagePreview('listing-empty');
     const empty = document.createElement('li');
     empty.className = 'file-empty hud-label';
     empty.textContent = 'DIRECTORY EMPTY';
@@ -431,6 +614,11 @@ function renderFileBrowser(result) {
     row.draggable = true;
     row.dataset.path = entry.fullPath;
     row.dataset.type = entry.type;
+    row.dataset.name = entry.name;
+    if (isPreviewableImage(entry)) {
+      row.classList.add('file-row--image');
+      row.dataset.previewable = 'true';
+    }
     row.title = entry.fullPath;
     const marker = document.createElement('span');
     marker.className = 'file-marker';
@@ -441,6 +629,7 @@ function renderFileBrowser(result) {
     row.append(marker, name);
     list.append(row);
   });
+  reconcileImagePreviewRow(list);
 }
 
 async function refreshFileBrowser(directoryPath = null) {
@@ -494,9 +683,30 @@ function initializeFileBrowser() {
     insertDroppedPaths([row.dataset.path], 'browser');
   });
 
+  list.addEventListener('pointerover', (event) => {
+    const row = event.target.closest('.file-row[data-previewable="true"]');
+    if (!row || row.contains(event.relatedTarget)) return;
+    scheduleImagePreview(row, event.clientX, event.clientY);
+  });
+
+  list.addEventListener('pointermove', (event) => {
+    const row = event.target.closest('.file-row[data-previewable="true"]');
+    if (!row || row.dataset.path !== imagePreviewPath) return;
+    imagePreviewCursorX = event.clientX;
+    imagePreviewCursorY = event.clientY;
+    positionImagePreview();
+  });
+
+  list.addEventListener('pointerout', (event) => {
+    const row = event.target.closest('.file-row[data-previewable="true"]');
+    if (!row || row.contains(event.relatedTarget) || row.dataset.path !== imagePreviewPath) return;
+    hideImagePreview('leave');
+  });
+
   list.addEventListener('dragstart', (event) => {
     const row = event.target.closest('.file-row');
     if (!row || !event.dataTransfer) return;
+    hideImagePreview('drag');
     event.dataTransfer.effectAllowed = 'copy';
     event.dataTransfer.setData('text/plain', row.dataset.path);
     event.dataTransfer.setData(internalFilePathMime, row.dataset.path);
@@ -513,6 +723,10 @@ function initializeFileBrowser() {
   modeChip.addEventListener('click', () => {
     if (fileBrowserMode === 'browsing') resumeLiveFileBrowser();
   });
+
+  list.addEventListener('scroll', () => hideImagePreview('scroll'), { passive: true });
+  window.addEventListener('resize', positionImagePreview);
+  window.addEventListener('blur', () => hideImagePreview('blur'));
 
   updateFileBrowserMode('live');
   startFileBrowserPolling();
