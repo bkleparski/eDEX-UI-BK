@@ -65,6 +65,8 @@ let imagePreviewHoverStartedAt = 0;
 let imagePreviewPath = null;
 let imagePreviewCursorX = 0;
 let imagePreviewCursorY = 0;
+let ttyContextSessionId = null;
+let ttyRenameSessionId = null;
 let fileDragDepth = 0;
 let dropTestOutput = '';
 let rendererShuttingDown = false;
@@ -1073,6 +1075,160 @@ function updateShellStatus() {
   }
 }
 
+function positionTTYOverlay(element, anchorX, anchorY, offset = 6) {
+  const margin = 8;
+  const rect = element.getBoundingClientRect();
+  let left = anchorX + offset;
+  let top = anchorY + offset;
+  if (left + rect.width > window.innerWidth - margin) left = anchorX - rect.width - offset;
+  if (top + rect.height > window.innerHeight - margin) top = anchorY - rect.height - offset;
+  left = Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - rect.width - margin));
+  top = Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - rect.height - margin));
+  element.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+}
+
+function hideTTYContextMenu() {
+  const menu = document.getElementById('ttyContextMenu');
+  menu.hidden = true;
+  menu.setAttribute('aria-hidden', 'true');
+  ttyContextSessionId = null;
+  document.body.dataset.ttyContextMenuOpen = 'false';
+}
+
+function hideTTYRename() {
+  const popover = document.getElementById('ttyRenamePopover');
+  popover.hidden = true;
+  popover.setAttribute('aria-hidden', 'true');
+  ttyRenameSessionId = null;
+  document.body.dataset.ttyRenameOpen = 'false';
+}
+
+function renderTerminalTabLabel(session) {
+  if (!session) return;
+  const context = session.manualName || session.autoContext || '~';
+  session.tab.querySelector('.tty-context').textContent = context;
+  session.tab.dataset.context = context;
+  session.tab.dataset.manualName = session.manualName || '';
+  session.tab.title = session.manualName || session.autoTitle || context;
+}
+
+function showTTYContextMenu(sessionId, clientX, clientY) {
+  const session = terminalSessions.get(sessionId);
+  if (!session || session.closing) return;
+  hideTTYRename();
+  const menu = document.getElementById('ttyContextMenu');
+  const autoName = menu.querySelector('[data-action="auto-name"]');
+  ttyContextSessionId = sessionId;
+  autoName.hidden = !session.manualName;
+  menu.hidden = false;
+  menu.setAttribute('aria-hidden', 'false');
+  document.body.dataset.ttyContextMenuOpen = 'true';
+  document.body.dataset.ttyContextSessionId = sessionId;
+  positionTTYOverlay(menu, clientX, clientY);
+  menu.querySelector('[data-action="rename"]').focus({ preventScroll: true });
+}
+
+function beginTTYRename(sessionId) {
+  const session = terminalSessions.get(sessionId);
+  if (!session || session.closing) return;
+  hideTTYContextMenu();
+  ttyRenameSessionId = sessionId;
+  const popover = document.getElementById('ttyRenamePopover');
+  const input = document.getElementById('ttyRenameInput');
+  const tabRect = session.tab.getBoundingClientRect();
+  input.value = (session.manualName || session.autoContext || '').slice(0, 24);
+  popover.hidden = false;
+  popover.setAttribute('aria-hidden', 'false');
+  document.body.dataset.ttyRenameOpen = 'true';
+  positionTTYOverlay(popover, tabRect.left, tabRect.bottom, 5);
+  input.focus({ preventScroll: true });
+  input.select();
+}
+
+function commitTTYRename() {
+  const session = terminalSessions.get(ttyRenameSessionId);
+  if (!session) {
+    hideTTYRename();
+    return;
+  }
+  const input = document.getElementById('ttyRenameInput');
+  const manualName = input.value.trim().replace(/\s+/g, ' ').slice(0, 24).trimEnd();
+  session.manualName = manualName || null;
+  renderTerminalTabLabel(session);
+  document.body.dataset.ttyRenameCount = String((Number(document.body.dataset.ttyRenameCount) || 0) + 1);
+  document.body.dataset.ttyLastRenamedSession = session.id;
+  document.body.dataset.ttyLastManualName = session.manualName || '';
+  hideTTYRename();
+  focusTerminal();
+}
+
+function resetTTYName(sessionId) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  session.manualName = null;
+  renderTerminalTabLabel(session);
+  document.body.dataset.ttyAutoNameResetCount = String(
+    (Number(document.body.dataset.ttyAutoNameResetCount) || 0) + 1
+  );
+  hideTTYContextMenu();
+  focusTerminal();
+}
+
+function closeTTYSession(sessionId) {
+  const session = terminalSessions.get(sessionId);
+  if (!session || session.closing) return;
+  session.closing = true;
+  session.tab.disabled = true;
+  document.body.dataset.ttyContextCloseCount = String(
+    (Number(document.body.dataset.ttyContextCloseCount) || 0) + 1
+  );
+  document.body.dataset.ttyLastClosedSession = sessionId;
+  hideTTYContextMenu();
+  hideTTYRename();
+  window.terminalApi.close(sessionId);
+}
+
+function initializeTTYContextMenu() {
+  const menu = document.getElementById('ttyContextMenu');
+  const input = document.getElementById('ttyRenameInput');
+
+  menu.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const sessionId = ttyContextSessionId;
+    if (!action || !sessionId) return;
+    if (action === 'rename') beginTTYRename(sessionId);
+    else if (action === 'auto-name') resetTTYName(sessionId);
+    else if (action === 'close') closeTTYSession(sessionId);
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    event.stopPropagation();
+    commitTTYRename();
+  });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (menu.contains(event.target) || document.getElementById('ttyRenamePopover').contains(event.target)) return;
+    hideTTYContextMenu();
+    hideTTYRename();
+  }, true);
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || (ttyContextSessionId === null && ttyRenameSessionId === null)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    hideTTYContextMenu();
+    hideTTYRename();
+    focusTerminal();
+  }, true);
+
+  window.addEventListener('resize', () => {
+    hideTTYContextMenu();
+    hideTTYRename();
+  });
+}
+
 function switchTerminalSession(sessionId) {
   const nextSession = terminalSessions.get(sessionId);
   if (!nextSession) return;
@@ -1100,6 +1256,9 @@ function handleTerminalExit(sessionId) {
   const sessionOrder = [...terminalSessions.keys()];
   const exitIndex = sessionOrder.indexOf(sessionId);
   const wasActive = sessionId === activeSessionId;
+
+  if (ttyContextSessionId === sessionId) hideTTYContextMenu();
+  if (ttyRenameSessionId === sessionId) hideTTYRename();
 
   terminalSessions.delete(sessionId);
   session.tab.remove();
@@ -1134,10 +1293,10 @@ function updateTerminalMetadata(updates) {
     const session = terminalSessions.get(metadata?.sessionId);
     if (!session) return;
     const context = typeof metadata.label === 'string' && metadata.label ? metadata.label : '~';
-    session.tab.querySelector('.tty-context').textContent = context;
+    session.autoContext = context;
+    session.autoTitle = metadata.idle ? metadata.cwd || metadata.command || context : metadata.command || context;
+    renderTerminalTabLabel(session);
     session.tab.dataset.processName = metadata.processName || '';
-    session.tab.dataset.context = context;
-    session.tab.title = metadata.idle ? metadata.cwd || metadata.command || context : metadata.command || context;
     if (metadata.processName === 'top') document.body.dataset.ttyTopObserved = 'true';
   });
 }
@@ -1158,6 +1317,11 @@ function createTerminalTab(sessionId, sessionNumber) {
   context.textContent = '~';
   tab.append(index, context);
   tab.addEventListener('click', () => switchTerminalSession(sessionId));
+  tab.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showTTYContextMenu(sessionId, event.clientX, event.clientY);
+  });
   document.getElementById('ttyTabs').append(tab);
   return tab;
 }
@@ -1202,6 +1366,10 @@ async function createTerminalSession() {
     fitAddon,
     container,
     tab: createTerminalTab(sessionId, sessionNumber),
+    autoContext: '~',
+    autoTitle: '~',
+    manualName: null,
+    closing: false,
     online: false,
     failed: false
   };
@@ -1272,6 +1440,7 @@ async function initializeTerminal() {
 initializeAudio();
 initializeBoot();
 initializeControls();
+initializeTTYContextMenu();
 initializeFileBrowser();
 initializeFileDrop();
 initializeMonitoring();

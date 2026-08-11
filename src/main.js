@@ -699,7 +699,7 @@ function registerTerminalIpc() {
         terminals.delete(event.sender.id);
         disposeTerminalMetadata(event.sender.id);
       }
-      if (!event.sender.isDestroyed()) {
+      if (!event.sender.isDestroyed() && !gracefulShutdownStarted) {
         event.sender.send('terminal:exit', { sessionId, exitCode, signal });
       }
     });
@@ -720,6 +720,18 @@ function registerTerminalIpc() {
     const cols = Math.min(Math.max(payload.cols, 2), 500);
     const rows = Math.min(Math.max(payload.rows, 1), 300);
     terminals.get(event.sender.id)?.get(sessionId)?.resize(cols, rows);
+  });
+
+  ipcMain.on('terminal:close', (event, payload) => {
+    const sessionId = validSessionId(payload?.sessionId);
+    if (!isTrustedSender(event) || !sessionId) return;
+    const terminal = terminals.get(event.sender.id)?.get(sessionId);
+    if (!terminal) return;
+    try {
+      terminal.kill();
+    } catch {
+      // The PTY may have exited between the renderer request and this handler.
+    }
   });
 
   ipcMain.on('terminal:set-active', (event, payload) => {
@@ -895,6 +907,33 @@ function createWindow() {
               dataTransfer: transfer
             }));
           };
+          const dispatchTTYContextMenu = (tab, clientX = null, clientY = null) => {
+            const rect = tab.getBoundingClientRect();
+            const event = new MouseEvent('contextmenu', {
+              bubbles: true,
+              cancelable: true,
+              clientX: clientX ?? rect.right - 2,
+              clientY: clientY ?? rect.bottom - 2
+            });
+            const accepted = tab.dispatchEvent(event);
+            document.body.dataset.ttyNativeMenuPrevented = String(!accepted && event.defaultPrevented);
+          };
+          const dismissTTYMenuWithEscape = () => document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            bubbles: true,
+            cancelable: true
+          }));
+          const submitTTYRename = (name) => {
+            const input = document.getElementById('ttyRenameInput');
+            input.value = name;
+            input.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'Enter',
+              code: 'Enter',
+              bubbles: true,
+              cancelable: true
+            }));
+          };
           press('KeyT');
           press('Digit1');
           setTimeout(() => press('Digit2'), 250);
@@ -915,20 +954,133 @@ function createWindow() {
               && document.getElementById('shellStatusText').textContent === 'LINK ONLINE'
               && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.type === 'directory'),
             () => {
-              const directory = [...document.querySelectorAll('#fileList .file-row')]
-                .find((row) => row.dataset.type === 'directory');
-              directory.click();
-              setTimeout(() => window.terminalApi.write('tty-02', '/usr/bin/top -l 2 -s 1 >/dev/null; exit\\r'), 250);
+              const backgroundTab = document.querySelector('.tty-tab[data-session-id="tty-01"]');
+              dispatchTTYContextMenu(backgroundTab, window.innerWidth - 2, window.innerHeight - 2);
+              waitFor(
+                () => document.body.dataset.ttyContextMenuOpen === 'true'
+                  && document.body.dataset.ttyContextSessionId === 'tty-01',
+                () => {
+                  const menuRect = document.getElementById('ttyContextMenu').getBoundingClientRect();
+                  document.body.dataset.ttyContextViewportSafe = String(
+                    menuRect.left >= 0 && menuRect.top >= 0
+                      && menuRect.right <= window.innerWidth && menuRect.bottom <= window.innerHeight
+                  );
+                  dismissTTYMenuWithEscape();
+                  waitFor(
+                    () => document.body.dataset.ttyContextMenuOpen === 'false',
+                    () => {
+                      document.body.dataset.ttyContextEscapeClosed = 'true';
+                      dispatchTTYContextMenu(backgroundTab);
+                      document.querySelector('#ttyContextMenu [data-action="rename"]').click();
+                      waitFor(
+                        () => document.body.dataset.ttyRenameOpen === 'true',
+                        () => {
+                          document.getElementById('ttyRenameInput').value = 'CANCELLED NAME';
+                          dismissTTYMenuWithEscape();
+                          waitFor(
+                            () => document.body.dataset.ttyRenameOpen === 'false'
+                              && backgroundTab.dataset.manualName === '',
+                            () => {
+                              document.body.dataset.ttyRenameEscapeCancelled = 'true';
+                              dispatchTTYContextMenu(backgroundTab);
+                              document.querySelector('#ttyContextMenu [data-action="rename"]').click();
+                              waitFor(
+                                () => document.body.dataset.ttyRenameOpen === 'true',
+                                () => {
+                                  submitTTYRename('OPS CONTROL');
+                                  waitFor(
+                                    () => backgroundTab.dataset.manualName === 'OPS CONTROL'
+                                      && document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-02',
+                                    () => {
+                                      setTimeout(() => {
+                                        if (backgroundTab.dataset.manualName === 'OPS CONTROL'
+                                          && backgroundTab.querySelector('.tty-context').textContent === 'OPS CONTROL') {
+                                          document.body.dataset.ttyManualNamePersisted = 'true';
+                                        }
+                                        dispatchTTYContextMenu(backgroundTab);
+                                        waitFor(
+                                          () => !document.querySelector('#ttyContextMenu [data-action="auto-name"]').hidden,
+                                          () => {
+                                            document.querySelector('#ttyContextMenu [data-action="auto-name"]').click();
+                                            waitFor(
+                                              () => Number(document.body.dataset.ttyAutoNameResetCount || 0) === 1
+                                                && backgroundTab.dataset.manualName === '',
+                                              () => {
+                                                dispatchTTYContextMenu(backgroundTab);
+                                                document.querySelector('.terminal-surface').dispatchEvent(new PointerEvent('pointerdown', {
+                                                  bubbles: true,
+                                                  cancelable: true
+                                                }));
+                                                waitFor(
+                                                  () => document.body.dataset.ttyContextMenuOpen === 'false',
+                                                  () => {
+                                                    document.body.dataset.ttyContextOutsideClosed = 'true';
+                                                    dispatchTTYContextMenu(backgroundTab);
+                                                    document.querySelector('#ttyContextMenu [data-action="rename"]').click();
+                                                    waitFor(
+                                                      () => document.body.dataset.ttyRenameOpen === 'true',
+                                                      () => {
+                                                        submitTTYRename('PINNED OPERATIONS ALPHA EXTRA');
+                                                        waitFor(
+                                                          () => backgroundTab.dataset.manualName === 'PINNED OPERATIONS ALPHA',
+                                                          () => {
+                                                            dispatchTTYContextMenu(backgroundTab);
+                                                            waitFor(
+                                                              () => !document.querySelector('#ttyContextMenu [data-action="auto-name"]').hidden,
+                                                              () => document.querySelector('#ttyContextMenu [data-action="close"]').click()
+                                                            );
+                                                          }
+                                                        );
+                                                      }
+                                                    );
+                                                  }
+                                                );
+                                              }
+                                            );
+                                          }
+                                        );
+                                      }, 1_250);
+                                    }
+                                  );
+                                }
+                              );
+                            }
+                          );
+                        }
+                      );
+                    }
+                  );
+                }
+              );
             }
           );
           waitFor(
-            () => Number(document.body.dataset.terminalExitCount || 0) >= 1,
-            () => window.terminalApi.write('tty-01', 'exit\\r')
+            () => Number(document.body.dataset.terminalExitCount || 0) >= 1
+              && document.querySelectorAll('#ttyTabs .tty-tab').length === 1
+              && document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-02',
+            () => {
+              document.body.dataset.ttyBackgroundClosePreservedActive = 'true';
+              const directory = [...document.querySelectorAll('#fileList .file-row')]
+                .find((row) => row.dataset.type === 'directory');
+              directory.click();
+              window.terminalApi.write('tty-02', '/usr/bin/top -l 2 -s 1 >/dev/null\\r');
+              waitFor(
+                () => document.body.dataset.ttyTopObserved === 'true'
+                  && document.body.dataset.fileBrowserMode === 'browsing',
+                () => {
+                  dispatchTTYContextMenu(document.querySelector('.tty-tab[data-session-id="tty-02"]'));
+                  document.querySelector('#ttyContextMenu [data-action="close"]').click();
+                }
+              );
+            }
           );
           waitFor(
             () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-03'
-              && document.getElementById('shellStatusText').textContent === 'LINK ONLINE',
+              && document.getElementById('shellStatusText').textContent === 'LINK ONLINE'
+              && Number(document.body.dataset.terminalRespawnCount || 0) === 1
+              && document.body.dataset.fileBrowserMode === 'live',
             () => {
+              document.body.dataset.ttySoleCloseRespawned = 'true';
               window.terminalApi.write('tty-03', ${JSON.stringify(`cd '${visualBrowserRoot.replace(/'/g, `'\\''`)}'\r`)});
               setTimeout(() => {
                 window.terminalApi.write('tty-03', "printf '__EDEX_DROP_OK__<%s><%s>\\\\n' ");
@@ -1062,6 +1214,15 @@ function createWindow() {
                                                                   .find((row) => row.dataset.name === 'Documents');
                                                                 documentsRow.scrollIntoView({ block: 'end' });
                                                                 document.body.dataset.dotfilesScreenshotReady = 'true';
+                                                                const activeTab = document.querySelector('#ttyTabs .tty-tab.is-active');
+                                                                dispatchTTYContextMenu(activeTab);
+                                                                waitFor(
+                                                                  () => document.body.dataset.ttyContextMenuOpen === 'true'
+                                                                    && document.body.dataset.ttyContextSessionId === 'tty-03',
+                                                                  () => {
+                                                                    document.body.dataset.ttyFinalMenuReady = 'true';
+                                                                  }
+                                                                );
                                                               }
                                                             );
                                                           }
@@ -1125,6 +1286,36 @@ function createWindow() {
             terminalExitCount: Number(document.body.dataset.terminalExitCount || 0),
             terminalRespawnCount: Number(document.body.dataset.terminalRespawnCount || 0),
             terminalOfflineMarker: document.querySelector('.terminal-instance:not([hidden])')?.textContent.includes('SHELL OFFLINE') || false,
+            ttyContextMenuOpen: document.body.dataset.ttyContextMenuOpen === 'true',
+            ttyContextSessionId: document.body.dataset.ttyContextSessionId || null,
+            ttyNativeMenuPrevented: document.body.dataset.ttyNativeMenuPrevented === 'true',
+            ttyContextViewportSafe: document.body.dataset.ttyContextViewportSafe === 'true',
+            ttyContextEscapeClosed: document.body.dataset.ttyContextEscapeClosed === 'true',
+            ttyContextOutsideClosed: document.body.dataset.ttyContextOutsideClosed === 'true',
+            ttyRenameEscapeCancelled: document.body.dataset.ttyRenameEscapeCancelled === 'true',
+            ttyManualNamePersisted: document.body.dataset.ttyManualNamePersisted === 'true',
+            ttyRenameCount: Number(document.body.dataset.ttyRenameCount || 0),
+            ttyAutoNameResetCount: Number(document.body.dataset.ttyAutoNameResetCount || 0),
+            ttyContextCloseCount: Number(document.body.dataset.ttyContextCloseCount || 0),
+            ttyBackgroundClosePreservedActive: document.body.dataset.ttyBackgroundClosePreservedActive === 'true',
+            ttySoleCloseRespawned: document.body.dataset.ttySoleCloseRespawned === 'true',
+            ttyFinalMenuReady: document.body.dataset.ttyFinalMenuReady === 'true',
+            ttyContextMenuGeometry: (() => {
+              const menu = document.getElementById('ttyContextMenu');
+              const rect = menu.getBoundingClientRect();
+              return {
+                hidden: menu.hidden,
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                actions: [...menu.querySelectorAll('[data-action]')]
+                  .filter((item) => getComputedStyle(item).display !== 'none')
+                  .map((item) => item.textContent.trim())
+              };
+            })(),
             dropPathApiSupported: document.body.dataset.dropPathApiSupported === 'true',
             dropTargetObserved: document.body.dataset.dropTargetObserved === 'true',
             dropIndicatorCleared: document.body.dataset.dropIndicatorCleared === 'true',
@@ -1272,6 +1463,19 @@ function createWindow() {
             || diagnostics.terminalOfflineMarker || diagnostics.shellStatus !== 'LINK ONLINE') {
             throw new Error('PTY exit lifecycle did not close tabs and respawn the final session');
           }
+          const ttyMenu = diagnostics.ttyContextMenuGeometry;
+          if (!diagnostics.ttyContextMenuOpen || diagnostics.ttyContextSessionId !== 'tty-03'
+            || !diagnostics.ttyNativeMenuPrevented || !diagnostics.ttyContextViewportSafe
+            || !diagnostics.ttyContextEscapeClosed || !diagnostics.ttyContextOutsideClosed
+            || !diagnostics.ttyRenameEscapeCancelled || !diagnostics.ttyManualNamePersisted
+            || diagnostics.ttyRenameCount !== 2 || diagnostics.ttyAutoNameResetCount !== 1
+            || diagnostics.ttyContextCloseCount !== 2 || !diagnostics.ttyBackgroundClosePreservedActive
+            || !diagnostics.ttySoleCloseRespawned || !diagnostics.ttyFinalMenuReady
+            || ttyMenu.hidden || ttyMenu.actions.join(',') !== 'RENAME,CLOSE'
+            || ttyMenu.left < 0 || ttyMenu.top < 0
+            || ttyMenu.right > ttyMenu.viewportWidth || ttyMenu.bottom > ttyMenu.viewportHeight) {
+            throw new Error('TTY context menu, rename/auto-name, dismissal or close lifecycle failed');
+          }
           const expectedDropPayload = "'/tmp/eDEX drag one.txt' '/tmp/O'\\''Brien [v2].log' ";
           if (!diagnostics.dropPathApiSupported || !diagnostics.dropTargetObserved
             || !diagnostics.dropIndicatorCleared || !diagnostics.dropIndicatorVisible
@@ -1368,7 +1572,7 @@ function createWindow() {
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            `edex-ui-bk-phase13-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
+            `edex-ui-bk-phase14-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);
@@ -1378,7 +1582,7 @@ function createWindow() {
           process.exitCode = 1;
         }
         app.quit();
-      }, 13_500);
+      }, 17_500);
     });
   }
 }

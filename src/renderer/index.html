@@ -183,6 +183,20 @@
         </section>
       </main>
 
+      <div class="tty-context-menu hud-frame" id="ttyContextMenu" role="menu"
+        aria-label="Akcje zakladki terminala" aria-hidden="true" hidden>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-action="rename">RENAME</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-action="auto-name" hidden>AUTO NAME</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-action="close">CLOSE</button>
+      </div>
+
+      <div class="tty-rename-popover hud-frame" id="ttyRenamePopover" aria-hidden="true" hidden>
+        <label class="hud-label" for="ttyRenameInput">TTY NAME</label>
+        <input class="tty-rename-input" id="ttyRenameInput" type="text" maxlength="24"
+          autocomplete="off" spellcheck="false" aria-label="Nowa nazwa zakladki terminala">
+        <span class="tty-rename-hint hud-label">ENTER APPLY · ESC CANCEL</span>
+      </div>
+
       <footer class="bottom-hud panel hud-frame boot-frame">
         <div class="bottom-hud__content boot-content boot-content--bottom">
           <span class="hud-label input-route">INPUT ROUTE / LOCAL PTY</span>
