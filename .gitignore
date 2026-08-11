@@ -5,5 +5,7 @@ build/*
 !build/icon-draft.png
 !build/icon.icns
 phase*-screenshot.png
+ref-*.png
+bug-*.png
 *.log
 .DS_Store
