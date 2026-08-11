@@ -15,6 +15,8 @@ Panel `SETTINGS` zapisuje wybór providera, modele i klucze w `config.json` kata
 
 Zmiana providera lub modelu w HUD rozpoczyna nowy kontekst rozmowy. Historia istnieje wyłącznie w pamięci procesu i nie jest zapisywana na dysku.
 
+Panel asystenta przełącza przycisk `AI ASSIST` lub skrót `⌘3`. Przy pierwszym otwarciu terminal i asystent dzielą dostępną przestrzeń po połowie. Później szerokość można zmienić przeciągając separator (albo klawiszami strzałek po ustawieniu na nim fokusu); ostatnia ręcznie ustawiona wartość jest zapisywana lokalnie w `localStorage`.
+
 ## Terminal
 
 ```text

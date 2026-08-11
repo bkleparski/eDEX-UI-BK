@@ -761,14 +761,26 @@ function initializeFileBrowser() {
   window.addEventListener('beforeunload', stopFileBrowserPolling, { once: true });
 }
 
+let terminalFitFrame = null;
+let terminalFocusRequested = false;
+
+function fitActiveTerminal({ focus = false } = {}) {
+  terminalFocusRequested = terminalFocusRequested || focus;
+  if (terminalFitFrame !== null) return;
+  terminalFitFrame = requestAnimationFrame(() => {
+    terminalFitFrame = null;
+    const shouldFocus = terminalFocusRequested;
+    terminalFocusRequested = false;
+    const session = terminalSessions.get(activeSessionId);
+    if (!session) return;
+    session.fitAddon.fit();
+    if (shouldFocus) session.terminal.focus();
+  });
+}
+
 function focusTerminal() {
   const session = terminalSessions.get(activeSessionId);
-  if (session) {
-    requestAnimationFrame(() => {
-      session.fitAddon.fit();
-      session.terminal.focus();
-    });
-  }
+  if (session) fitActiveTerminal({ focus: true });
 }
 
 function hasFileDrag(dataTransfer) {
@@ -1051,6 +1063,10 @@ function initializeControls() {
       event.preventDefault();
       event.stopPropagation();
       toggleDataGroup('files');
+    } else if (event.code === 'Digit3') {
+      event.preventDefault();
+      event.stopPropagation();
+      document.getElementById('assistantToggle').click();
     } else if (event.code === 'KeyT') {
       event.preventDefault();
       event.stopPropagation();
@@ -1428,7 +1444,7 @@ async function initializeTerminal() {
 
   window.terminalApi.onExit(({ sessionId }) => handleTerminalExit(sessionId));
 
-  const resizeObserver = new ResizeObserver(() => focusTerminal());
+  const resizeObserver = new ResizeObserver(() => fitActiveTerminal());
   resizeObserver.observe(document.querySelector('.terminal-surface'));
   window.addEventListener('beforeunload', () => {
     rendererShuttingDown = true;

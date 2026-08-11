@@ -966,8 +966,8 @@ function createWindow() {
   }
 
   const window = new BrowserWindow({
-    width: isVisualTest ? visualTestWidth : 1440,
-    height: isVisualTest ? visualTestHeight : 900,
+    width: isVisualTest || isAssistantVisualTest ? visualTestWidth : 1440,
+    height: isVisualTest || isAssistantVisualTest ? visualTestHeight : 900,
     minWidth: 960,
     minHeight: 640,
     center: true,
@@ -989,7 +989,7 @@ function createWindow() {
 
   window.loadFile(
     path.join(__dirname, 'renderer', 'index.html'),
-    isAutomatedTest ? { query: { test: isSmokeTest ? 'smoke' : 'visual' } } : undefined
+    isAutomatedTest ? { query: { test: isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : 'visual' } } : undefined
   );
 
   if (isSmokeTest) {
@@ -1651,7 +1651,7 @@ function createWindow() {
             || !diagnostics.fileBrowserDragStarted) {
             throw new Error('FILE SYSTEM drag/drop did not use the shared shell-quoting and active-session route');
           }
-          if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 5
+          if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 6
             || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 2
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
             || diagnostics.soundToggleCount < 3 || diagnostics.soundEnabled) {
@@ -1754,12 +1754,73 @@ function createWindow() {
           const assistantGeometry = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
             const started = Date.now();
             let submitted = false;
+            let resized = false;
+            let panelReadyAt = 0;
+            let resizeSettledAt = 0;
+            let resizeEvidence = null;
             const inspect = () => {
               const toggle = document.getElementById('assistantToggle');
-              if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+              if (toggle.getAttribute('aria-expanded') !== 'true') {
+                document.dispatchEvent(new KeyboardEvent('keydown', {
+                  code: 'Digit3', key: '3', metaKey: true, bubbles: true, cancelable: true
+                }));
+              }
               const panel = document.getElementById('assistantPanel');
               const model = document.getElementById('hudModel');
-              if (!submitted && !panel.hidden && !model.disabled && model.value) {
+              const terminalScreen = document.querySelector('.terminal-instance:not([hidden]) .xterm-screen');
+              if (!panel.hidden && !model.disabled && model.value && terminalScreen && panelReadyAt === 0) {
+                panelReadyAt = Date.now();
+              }
+              if (!resized && panelReadyAt > 0 && Date.now() - panelReadyAt > 500) {
+                const handle = document.getElementById('assistantResizer');
+                const handleRect = handle.getBoundingClientRect();
+                const initialPanelWidth = panel.getBoundingClientRect().width;
+                const initialTerminalPanelWidth = document.querySelector('.terminal-panel').getBoundingClientRect().width;
+                const initialTerminalScreenWidth = terminalScreen.getBoundingClientRect().width;
+                const fallbackStoredAbsent = localStorage.getItem('edex.assistant.width.v1') === null;
+                const pointerId = 41;
+                const startX = handleRect.left + (handleRect.width / 2);
+                handle.dispatchEvent(new PointerEvent('pointerdown', {
+                  bubbles: true, cancelable: true, pointerId, pointerType: 'mouse', button: 0, buttons: 1,
+                  clientX: startX, clientY: handleRect.top + 40
+                }));
+                handle.dispatchEvent(new PointerEvent('pointermove', {
+                  bubbles: true, cancelable: true, pointerId, pointerType: 'mouse', buttons: 1,
+                  clientX: startX - 120, clientY: handleRect.top + 40
+                }));
+                handle.dispatchEvent(new PointerEvent('pointerup', {
+                  bubbles: true, cancelable: true, pointerId, pointerType: 'mouse', button: 0,
+                  clientX: startX - 120, clientY: handleRect.top + 40
+                }));
+                const dragWidth = panel.getBoundingClientRect().width;
+                handle.focus();
+                handle.dispatchEvent(new KeyboardEvent('keydown', {
+                  key: 'ArrowRight', code: 'ArrowRight', bubbles: true, cancelable: true
+                }));
+                resizeEvidence = {
+                  initialPanelWidth,
+                  initialTerminalPanelWidth,
+                  initialTerminalScreenWidth,
+                  fallbackStoredAbsent,
+                  shortcutVisible: [...document.querySelectorAll('.shortcut-legend span')]
+                    .some((item) => item.textContent.replace(/\s+/g, ' ').trim() === '⌘3 AI'
+                      && getComputedStyle(item).display !== 'none'),
+                  dragWidth,
+                  keyboardWidth: panel.getBoundingClientRect().width,
+                  keyboardFocus: document.activeElement === handle
+                };
+                resized = true;
+                resizeSettledAt = Date.now();
+              }
+              if (resized && !submitted && Date.now() - resizeSettledAt > 350) {
+                const handle = document.getElementById('assistantResizer');
+                resizeEvidence.finalPanelWidth = panel.getBoundingClientRect().width;
+                resizeEvidence.finalTerminalScreenWidth = terminalScreen.getBoundingClientRect().width;
+                resizeEvidence.keyboardFocusAfterFit = document.activeElement === handle;
+                resizeEvidence.storedWidth = Number(localStorage.getItem('edex.assistant.width.v1'));
+                resizeEvidence.ariaNow = Number(handle.getAttribute('aria-valuenow'));
+                resizeEvidence.ariaMin = Number(handle.getAttribute('aria-valuemin'));
+                resizeEvidence.ariaMax = Number(handle.getAttribute('aria-valuemax'));
                 document.getElementById('assistantPrompt').value = 'Reply with exactly HUD_OK.';
                 document.getElementById('assistantForm').requestSubmit();
                 submitted = true;
@@ -1774,6 +1835,7 @@ function createWindow() {
                   provider: document.getElementById('hudProvider').value,
                   model: model.value,
                   responseLength: assistantBody.textContent.trim().length,
+                  resize: resizeEvidence,
                   viewport: { width: innerWidth, height: innerHeight }
                 });
               } else if (Date.now() - started > 90_000) reject(new Error('Assistant HUD inference did not complete'));
@@ -1781,6 +1843,7 @@ function createWindow() {
             };
             inspect();
           })`);
+          await window.webContents.executeJavaScript("document.getElementById('assistantResizer').focus()");
           await new Promise((resolve) => setTimeout(resolve, 300));
           const assistantScreenshot = await window.webContents.capturePage();
           const assistantScreenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-assistant-hud.png');
@@ -1837,10 +1900,63 @@ function createWindow() {
           const settingsScreenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-assistant-settings.png');
           fs.writeFileSync(settingsScreenshotPath, settingsScreenshot.toPNG());
 
-          if (assistantGeometry.panel.width < 300 || assistantGeometry.terminalWidth < 400
+          const reloadComplete = new Promise((resolve) => window.webContents.once('did-finish-load', resolve));
+          window.webContents.reload();
+          await reloadComplete;
+          const restoredWidth = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+            const pressAI = () => document.dispatchEvent(new KeyboardEvent('keydown', {
+              code: 'Digit3', key: '3', metaKey: true, bubbles: true, cancelable: true
+            }));
+            const started = Date.now();
+            let cycled = false;
+            const inspect = () => {
+              const panel = document.getElementById('assistantPanel');
+              const stored = Number(localStorage.getItem('edex.assistant.width.v1'));
+              if (panel.hidden && !cycled) pressAI();
+              if (!panel.hidden && panel.getBoundingClientRect().width > 0 && !cycled) {
+                pressAI();
+                if (!panel.hidden) return reject(new Error('Command 3 did not close assistant'));
+                pressAI();
+                cycled = true;
+              }
+              if (cycled && !panel.hidden && panel.getBoundingClientRect().width > 0) {
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+                  panelWidth: panel.getBoundingClientRect().width,
+                  storedWidth: stored,
+                  ariaNow: Number(document.getElementById('assistantResizer').getAttribute('aria-valuenow')),
+                  toggleCount: Number(document.body.dataset.assistantToggleCount),
+                  panelOpen: document.body.dataset.assistantPanelOpen
+                })));
+              } else if (Date.now() - started > 10_000) reject(new Error('Assistant width did not restore'));
+              else setTimeout(inspect, 100);
+            };
+            inspect();
+          })`);
+
+          const minimumAssistantTestTerminalWidth = assistantGeometry.viewport.width <= 1180 ? 300 : 400;
+          if (assistantGeometry.panel.width < 300 || assistantGeometry.terminalWidth < minimumAssistantTestTerminalWidth
             || assistantGeometry.panel.left < 0 || assistantGeometry.panel.right > assistantGeometry.viewport.width
             || !assistantGeometry.model || assistantGeometry.provider !== 'ollama' || assistantGeometry.responseLength < 1) {
             throw new Error('Assistant HUD geometry or dynamic Ollama model is invalid');
+          }
+          const resize = assistantGeometry.resize;
+          if (!resize.fallbackStoredAbsent || !resize.shortcutVisible
+            || Math.abs(resize.initialPanelWidth - resize.initialTerminalPanelWidth) > 2
+            || resize.dragWidth <= resize.initialPanelWidth + 80
+            || Math.abs(resize.keyboardWidth - (resize.dragWidth - 16)) > 2
+            || Math.abs(resize.finalPanelWidth - resize.keyboardWidth) > 2
+            || resize.finalTerminalScreenWidth >= resize.initialTerminalScreenWidth - 60
+            || !resize.keyboardFocus || !resize.keyboardFocusAfterFit
+            || resize.storedWidth !== Math.round(resize.finalPanelWidth)
+            || resize.ariaNow !== Math.round(resize.finalPanelWidth)
+            || resize.ariaNow < resize.ariaMin || resize.ariaNow > resize.ariaMax) {
+            throw new Error(`Assistant splitter drag, keyboard control, ARIA state or xterm fit is invalid: ${JSON.stringify(resize)}`);
+          }
+          if (Math.abs(restoredWidth.panelWidth - resize.finalPanelWidth) > 2
+            || restoredWidth.storedWidth !== resize.storedWidth
+            || restoredWidth.ariaNow !== resize.ariaNow
+            || restoredWidth.toggleCount !== 3 || restoredWidth.panelOpen !== 'true') {
+            throw new Error('Assistant width did not persist across renderer reload');
           }
           if (cancellationStatus.state !== 'error' || cancellationStatus.text !== 'ABORTED') {
             throw new Error(`Assistant cancellation returned ${cancellationStatus.text || 'no status'}`);
