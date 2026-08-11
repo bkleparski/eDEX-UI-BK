@@ -34,6 +34,8 @@ const testMode = new URLSearchParams(window.location.search).get('test');
 const isSmokeTest = testMode === 'smoke';
 const isVisualTest = testMode === 'visual';
 const smokeMarker = '__EDEX_PTY_ARM64_OK__';
+const dropTestMarker = "__EDEX_DROP_OK__</tmp/eDEX drag one.txt></tmp/O'Brien [v2].log>";
+const dropTestMime = 'application/x-edex-ui-bk-test-paths';
 const maxTerminalSessions = 8;
 const terminalSessions = new Map();
 let activeSessionId = null;
@@ -46,6 +48,8 @@ let audioContext = null;
 let soundEnabled = false;
 let fileRefreshTimer = null;
 let fileRefreshInFlight = false;
+let fileDragDepth = 0;
+let dropTestOutput = '';
 let rendererShuttingDown = false;
 const telemetryHistory = {
   cpu: [],
@@ -427,6 +431,94 @@ function focusTerminal() {
   }
 }
 
+function hasFileDrag(dataTransfer) {
+  const types = Array.from(dataTransfer?.types || []);
+  return types.includes('Files') || (isVisualTest && types.includes(dropTestMime));
+}
+
+function quoteShellPath(filePath) {
+  return `'${filePath.replace(/'/g, `'\\''`)}'`;
+}
+
+function droppedFilePaths(dataTransfer) {
+  if (isVisualTest && Array.from(dataTransfer?.types || []).includes(dropTestMime)) {
+    try {
+      const testPaths = JSON.parse(dataTransfer.getData(dropTestMime));
+      return Array.isArray(testPaths) ? testPaths.filter((item) => typeof item === 'string' && item.length > 0) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return Array.from(dataTransfer?.files || []).flatMap((file) => {
+    try {
+      const filePath = window.filesApi.getPathForFile(file);
+      return typeof filePath === 'string' && filePath.length > 0 ? [filePath] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function setFileDropTarget(active) {
+  document.querySelector('.terminal-panel').classList.toggle('is-file-drop-target', active);
+  if (active) document.body.dataset.dropTargetObserved = 'true';
+}
+
+function clearFileDropTarget() {
+  fileDragDepth = 0;
+  setFileDropTarget(false);
+  document.body.dataset.dropIndicatorCleared = 'true';
+}
+
+function insertDroppedPaths(paths) {
+  const session = terminalSessions.get(activeSessionId);
+  if (!session?.online || paths.length === 0) return false;
+  const payload = `${paths.map(quoteShellPath).join(' ')} `;
+  window.terminalApi.write(activeSessionId, payload);
+  document.body.dataset.dropPathCount = String(paths.length);
+  document.body.dataset.dropSessionId = activeSessionId;
+  document.body.dataset.dropQuotedPayload = payload;
+  session.terminal.focus();
+  return true;
+}
+
+function initializeFileDrop() {
+  const target = document.querySelector('.terminal-surface');
+  document.body.dataset.dropPathApiSupported = String(window.filesApi.pathForDropSupported === true);
+
+  target.addEventListener('dragenter', (event) => {
+    if (!hasFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    fileDragDepth += 1;
+    setFileDropTarget(true);
+  });
+
+  target.addEventListener('dragover', (event) => {
+    if (!hasFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setFileDropTarget(true);
+  });
+
+  target.addEventListener('dragleave', () => {
+    fileDragDepth = Math.max(0, fileDragDepth - 1);
+    if (fileDragDepth === 0) setFileDropTarget(false);
+  });
+
+  target.addEventListener('drop', (event) => {
+    if (!hasFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const paths = droppedFilePaths(event.dataTransfer);
+    clearFileDropTarget();
+    insertDroppedPaths(paths);
+  });
+
+  document.addEventListener('dragend', clearFileDropTarget);
+  window.addEventListener('blur', clearFileDropTarget);
+}
+
 function removeBootListeners() {
   document.removeEventListener('keydown', handleBootInput, true);
   document.getElementById('bootOverlay').removeEventListener('click', handleBootClick);
@@ -785,6 +877,11 @@ async function initializeTerminal() {
     if (!session || typeof data !== 'string') return;
     session.terminal.write(data);
 
+    if (isVisualTest) {
+      dropTestOutput = `${dropTestOutput}${data}`.slice(-2_048);
+      if (dropTestOutput.includes(dropTestMarker)) document.body.dataset.dropShellVerified = 'true';
+    }
+
     if (isSmokeTest && sessionId === 'tty-01' && !smokeCompleted) {
       smokeOutput += data;
       if (smokeOutput.includes(smokeMarker)) {
@@ -811,6 +908,7 @@ initializeAudio();
 initializeBoot();
 initializeControls();
 initializeFileBrowser();
+initializeFileDrop();
 initializeMonitoring();
 initializeTerminal().catch((error) => {
   document.getElementById('shellStatus').dataset.state = 'offline';

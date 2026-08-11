@@ -665,6 +665,22 @@ function createWindow() {
             bubbles: true,
             cancelable: true
           }));
+          const dispatchTestFileDrag = (shouldDrop) => {
+            const target = document.querySelector('.terminal-surface');
+            const transfer = new DataTransfer();
+            transfer.setData('application/x-edex-ui-bk-test-paths', JSON.stringify([
+              '/tmp/eDEX drag one.txt',
+              "/tmp/O'Brien [v2].log"
+            ]));
+            const dispatch = (type) => target.dispatchEvent(new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer
+            }));
+            dispatch('dragenter');
+            dispatch('dragover');
+            if (shouldDrop) dispatch('drop');
+          };
           press('KeyT');
           press('Digit1');
           setTimeout(() => press('Digit2'), 250);
@@ -692,8 +708,16 @@ function createWindow() {
           waitFor(
             () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-03'
               && document.getElementById('shellStatusText').textContent === 'LINK ONLINE',
-            () => window.terminalApi.write('tty-03', 'cd /tmp\\r')
+            () => {
+              window.terminalApi.write('tty-03', 'cd /tmp\\r');
+              setTimeout(() => {
+                window.terminalApi.write('tty-03', "printf '__EDEX_DROP_OK__<%s><%s>\\\\n' ");
+                dispatchTestFileDrag(true);
+                setTimeout(() => window.terminalApi.write('tty-03', '\\r'), 100);
+              }, 750);
+            }
           );
+          setTimeout(() => dispatchTestFileDrag(false), 10_500);
         })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
       }, 2_000);
 
@@ -729,6 +753,14 @@ function createWindow() {
             terminalExitCount: Number(document.body.dataset.terminalExitCount || 0),
             terminalRespawnCount: Number(document.body.dataset.terminalRespawnCount || 0),
             terminalOfflineMarker: document.querySelector('.terminal-instance:not([hidden])')?.textContent.includes('SHELL OFFLINE') || false,
+            dropPathApiSupported: document.body.dataset.dropPathApiSupported === 'true',
+            dropTargetObserved: document.body.dataset.dropTargetObserved === 'true',
+            dropIndicatorCleared: document.body.dataset.dropIndicatorCleared === 'true',
+            dropIndicatorVisible: document.querySelector('.terminal-panel').classList.contains('is-file-drop-target'),
+            dropPathCount: Number(document.body.dataset.dropPathCount || 0),
+            dropSessionId: document.body.dataset.dropSessionId || null,
+            dropQuotedPayload: document.body.dataset.dropQuotedPayload || '',
+            dropShellVerified: document.body.dataset.dropShellVerified === 'true',
             systemGroupOn: !document.body.classList.contains('system-group-hidden'),
             filesGroupOn: !document.body.classList.contains('files-group-hidden'),
             systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
@@ -798,6 +830,13 @@ function createWindow() {
             || diagnostics.terminalOfflineMarker || diagnostics.shellStatus !== 'LINK ONLINE') {
             throw new Error('PTY exit lifecycle did not close tabs and respawn the final session');
           }
+          const expectedDropPayload = "'/tmp/eDEX drag one.txt' '/tmp/O'\\''Brien [v2].log' ";
+          if (!diagnostics.dropPathApiSupported || !diagnostics.dropTargetObserved
+            || !diagnostics.dropIndicatorCleared || !diagnostics.dropIndicatorVisible
+            || diagnostics.dropPathCount !== 2 || diagnostics.dropSessionId !== diagnostics.activeTerminal
+            || diagnostics.dropQuotedPayload !== expectedDropPayload || !diagnostics.dropShellVerified) {
+            throw new Error('File drag/drop path insertion, shell quoting or active-session routing failed');
+          }
           if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 5
             || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 2
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
@@ -848,7 +887,7 @@ function createWindow() {
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            `edex-ui-bk-phase9-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
+            `edex-ui-bk-phase10-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);

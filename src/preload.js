@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 function subscribe(channel, callback) {
   if (typeof callback !== 'function') {
@@ -30,5 +30,7 @@ contextBridge.exposeInMainWorld('monitoringApi', Object.freeze({
 }));
 
 contextBridge.exposeInMainWorld('filesApi', Object.freeze({
-  list: (sessionId) => ipcRenderer.invoke('files:list', { sessionId })
+  list: (sessionId) => ipcRenderer.invoke('files:list', { sessionId }),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  pathForDropSupported: typeof webUtils?.getPathForFile === 'function'
 }));

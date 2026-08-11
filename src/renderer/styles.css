@@ -1819,3 +1819,14 @@ body.files-group-hidden .files-section {
     display: none;
   }
 }
+
+.terminal-panel.is-file-drop-target {
+  border-color: rgb(var(--cyan-bright-rgb) / .82);
+  box-shadow:
+    0 0 5px rgb(var(--cyan-rgb) / .2),
+    inset 0 0 5px rgb(var(--cyan-rgb) / .08);
+}
+
+.terminal-panel.is-file-drop-target .terminal-surface {
+  opacity: .94;
+}
