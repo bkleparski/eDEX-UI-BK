@@ -754,13 +754,16 @@ function createWindow() {
               const panel = document.getElementById('telemetryPanel').getBoundingClientRect();
               const column = document.querySelector('.telemetry-column');
               const list = document.getElementById('fileList');
+              const diskDetails = document.querySelector('#diskSection .metric-pairs').getBoundingClientRect();
+              const networkHeading = document.querySelector('.network-section .section-heading').getBoundingClientRect();
               return {
                 width: panel.width,
                 height: panel.height,
                 columnClientHeight: column.clientHeight,
                 columnScrollHeight: column.scrollHeight,
                 fileListClientHeight: list.clientHeight,
-                fileListScrollHeight: list.scrollHeight
+                fileListScrollHeight: list.scrollHeight,
+                diskDetailsClearance: networkHeading.top - diskDetails.bottom
               };
             })(),
             terminalGeometry: (() => {
@@ -817,6 +820,7 @@ function createWindow() {
           if (diagnostics.telemetryGeometry.width < 320 || diagnostics.telemetryGeometry.width > 340
             || diagnostics.telemetryGeometry.columnScrollHeight > diagnostics.telemetryGeometry.columnClientHeight + 2
             || diagnostics.telemetryGeometry.fileListClientHeight < 30
+            || diagnostics.telemetryGeometry.diskDetailsClearance < 6
             || diagnostics.terminalGeometry.width < 850 || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Two-column layout has invalid geometry or scroll ownership');
           }

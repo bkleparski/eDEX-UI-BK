@@ -1039,11 +1039,11 @@ body.booting .boot-content--bottom {
 }
 
 .telemetry-column .disk-section {
-  flex-basis: 64px;
+  flex-basis: 74px;
 }
 
 .telemetry-column .network-section {
-  flex-basis: 278px;
+  flex-basis: 268px;
 }
 
 .network-section .network-summary {
@@ -1065,7 +1065,7 @@ body.booting .boot-content--bottom {
   text-align: right;
 }
 
-.network-section .process-row:nth-child(n + 6) {
+.network-section .process-row:nth-child(n + 5) {
   display: none;
 }
 
@@ -1079,11 +1079,11 @@ body.booting .boot-content--bottom {
   }
 
   .telemetry-column .disk-section {
-    flex-basis: 58px;
+    flex-basis: 68px;
   }
 
   .telemetry-column .network-section {
-    flex-basis: 238px;
+    flex-basis: 228px;
   }
 
   .network-section .network-summary {
@@ -1151,7 +1151,7 @@ body.booting .boot-content--bottom {
 }
 
 .disk-section {
-  flex-basis: 64px;
+  flex-basis: 74px;
 }
 
 .disk-heading {
@@ -1165,7 +1165,7 @@ body.booting .boot-content--bottom {
 }
 
 .disk-body {
-  padding-top: 1px;
+  padding: 1px 0 7px;
 }
 
 .disk-section.is-warning .meter > span {
