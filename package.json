@@ -13,6 +13,7 @@
     "test:unit": "node --test",
     "test:providers:local": "node scripts/local-provider-check.js",
     "test:cli:local": "node scripts/local-cli-check.js",
+    "test:providers:cloud": "node scripts/cloud-provider-check.js",
     "test:smoke": "EDEX_SMOKE_TEST=1 electron .",
     "test:visual": "EDEX_VISUAL_TEST=1 electron ."
   },

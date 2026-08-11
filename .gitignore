@@ -9,3 +9,7 @@ ref-*.png
 bug-*.png
 *.log
 .DS_Store
+/config.json
+.env
+.env.*
+!.env.example

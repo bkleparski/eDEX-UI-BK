@@ -42,7 +42,10 @@ function providerHttpError(provider, status, body, headers) {
 
 function normalizeNetworkError(provider, error) {
   if (error instanceof AssistantError) return error;
-  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+  if (error?.name === 'TimeoutError') {
+    return new AssistantError('TIMEOUT', `${provider} request timed out.`, { provider, cause: error });
+  }
+  if (error?.name === 'AbortError') {
     return new AssistantError('ABORTED', `${provider} request was cancelled.`, { provider, cause: error });
   }
   return new AssistantError('PROVIDER_OFFLINE', `${provider} is unavailable.`, { provider, cause: error });
