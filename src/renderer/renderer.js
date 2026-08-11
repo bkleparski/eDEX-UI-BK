@@ -1388,7 +1388,7 @@ async function createTerminalSession() {
     updateShellStatus();
     focusTerminal();
     if (isSmokeTest && sessionNumber === 1) {
-      window.terminalApi.write(sessionId, `printf '${smokeMarker}\\n'\r`);
+      window.terminalApi.write(sessionId, `command -v ai >/dev/null && command -v search >/dev/null && printf '${smokeMarker}\\n'\r`);
     } else if (isVisualTest) {
       window.terminalApi.write(sessionId, "clear; printf 'PTY LINK VERIFIED / ZSH READY\\n'\r");
     }

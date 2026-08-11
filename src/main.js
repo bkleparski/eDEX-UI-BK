@@ -20,8 +20,9 @@ const { ConfigStore } = require('./main/config-store');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
+const isAssistantVisualTest = process.env.EDEX_ASSISTANT_VISUAL_TEST === '1';
 const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
-const isAutomatedTest = isSmokeTest || isVisualTest;
+const isAutomatedTest = isSmokeTest || isVisualTest || isAssistantVisualTest;
 const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
 const minimumVisualTerminalWidth = visualTestWidth < 1200 ? 500 : 850;
@@ -69,6 +70,11 @@ const IMAGE_PREVIEW_MIME_TYPES = new Map([
 const publicIpCache = { value: null, expiresAt: 0, inFlight: null };
 const imagePreviewCache = new Map();
 let imagePreviewCacheBytes = 0;
+
+if (isAutomatedTest) {
+  const testKind = isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : 'visual';
+  app.setPath('userData', path.join(os.tmpdir(), `edex-ui-bk-${testKind}-${process.pid}`));
+}
 
 function isTrustedSender(event) {
   const senderUrl = event.senderFrame?.url;
@@ -904,8 +910,9 @@ function registerAssistantIpc() {
         model
       }, { signal: controller.signal, onEvent: send });
     } catch (error) {
-      send({ requestId, ...assistantErrorPayload(error) });
-      throw error;
+      const failure = assistantErrorPayload(error);
+      send({ requestId, ...failure });
+      return { ok: false, requestId, error: failure };
     } finally {
       requests.delete(requestId);
     }
@@ -1737,6 +1744,122 @@ function createWindow() {
         }
         app.quit();
       }, 17_500);
+    });
+  }
+
+  if (isAssistantVisualTest) {
+    window.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const assistantGeometry = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+            const started = Date.now();
+            let submitted = false;
+            const inspect = () => {
+              const toggle = document.getElementById('assistantToggle');
+              if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+              const panel = document.getElementById('assistantPanel');
+              const model = document.getElementById('hudModel');
+              if (!submitted && !panel.hidden && !model.disabled && model.value) {
+                document.getElementById('assistantPrompt').value = 'Reply with exactly HUD_OK.';
+                document.getElementById('assistantForm').requestSubmit();
+                submitted = true;
+              }
+              const assistantBody = document.querySelector('.chat-message[data-role="assistant"] .chat-message__body');
+              if (submitted && document.getElementById('assistantCancel').hidden && assistantBody?.textContent.trim()) {
+                const panelRect = panel.getBoundingClientRect();
+                const terminalRect = document.querySelector('.terminal-panel').getBoundingClientRect();
+                resolve({
+                  panel: { left: panelRect.left, top: panelRect.top, right: panelRect.right, bottom: panelRect.bottom, width: panelRect.width },
+                  terminalWidth: terminalRect.width,
+                  provider: document.getElementById('hudProvider').value,
+                  model: model.value,
+                  responseLength: assistantBody.textContent.trim().length,
+                  viewport: { width: innerWidth, height: innerHeight }
+                });
+              } else if (Date.now() - started > 90_000) reject(new Error('Assistant HUD inference did not complete'));
+              else setTimeout(inspect, 200);
+            };
+            inspect();
+          })`);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const assistantScreenshot = await window.webContents.capturePage();
+          const assistantScreenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-assistant-hud.png');
+          fs.writeFileSync(assistantScreenshotPath, assistantScreenshot.toPNG());
+
+          const cancellationStatus = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+            const prompt = document.getElementById('assistantPrompt');
+            prompt.value = 'Generate a numbered list with one thousand detailed items.';
+            document.getElementById('assistantForm').requestSubmit();
+            const started = Date.now();
+            let cancelled = false;
+            const inspect = () => {
+              const cancel = document.getElementById('assistantCancel');
+              if (!cancelled && !cancel.hidden) {
+                cancel.click();
+                cancelled = true;
+              }
+              const status = document.getElementById('assistantStatus');
+              if (cancelled && cancel.hidden) resolve({ state: status.dataset.state, text: status.textContent });
+              else if (Date.now() - started > 15_000) reject(new Error('Assistant cancellation did not settle'));
+              else setTimeout(inspect, 100);
+            };
+            inspect();
+          })`);
+
+          const settingsGeometry = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+            document.getElementById('settingsToggle').click();
+            const started = Date.now();
+            const inspect = () => {
+              const dialog = document.getElementById('settingsDialog');
+              const localProvider = document.getElementById('localProvider');
+              if (!dialog.hidden && localProvider.value === 'ollama') {
+                localProvider.value = 'lmstudio';
+                localProvider.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+              const localModel = document.getElementById('localModel');
+              if (!dialog.hidden && localProvider.value === 'lmstudio' && !localModel.disabled && localModel.value) {
+                const rect = dialog.querySelector('.settings-panel').getBoundingClientRect();
+                resolve({
+                  left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+                  width: rect.width, height: rect.height,
+                  model: localModel.value,
+                  secretsHidden: ['braveApiKey', 'openRouterApiKey', 'openCodeGoApiKey']
+                    .every((id) => document.getElementById(id).value === ''),
+                  viewport: { width: innerWidth, height: innerHeight }
+                });
+              } else if (Date.now() - started > 15_000) reject(new Error('Assistant settings models did not load'));
+              else setTimeout(inspect, 200);
+            };
+            inspect();
+          })`);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const settingsScreenshot = await window.webContents.capturePage();
+          const settingsScreenshotPath = path.join(os.tmpdir(), 'edex-ui-bk-assistant-settings.png');
+          fs.writeFileSync(settingsScreenshotPath, settingsScreenshot.toPNG());
+
+          if (assistantGeometry.panel.width < 300 || assistantGeometry.terminalWidth < 400
+            || assistantGeometry.panel.left < 0 || assistantGeometry.panel.right > assistantGeometry.viewport.width
+            || !assistantGeometry.model || assistantGeometry.provider !== 'ollama' || assistantGeometry.responseLength < 1) {
+            throw new Error('Assistant HUD geometry or dynamic Ollama model is invalid');
+          }
+          if (cancellationStatus.state !== 'error' || cancellationStatus.text !== 'ABORTED') {
+            throw new Error(`Assistant cancellation returned ${cancellationStatus.text || 'no status'}`);
+          }
+          if (settingsGeometry.left < 0 || settingsGeometry.top < 0
+            || settingsGeometry.right > settingsGeometry.viewport.width || settingsGeometry.bottom > settingsGeometry.viewport.height
+            || !settingsGeometry.model || !settingsGeometry.secretsHidden) {
+            throw new Error('Settings geometry, dynamic LM Studio model or secret boundary is invalid');
+          }
+          console.log(`Assistant HUD visual test passed: ${assistantGeometry.model}; LM Studio ${settingsGeometry.model}.`);
+          console.log(`Assistant HUD screenshot: ${assistantScreenshotPath}`);
+          console.log(`Assistant settings screenshot: ${settingsScreenshotPath}`);
+          process.exitCode = 0;
+        } catch (error) {
+          console.error(`Assistant HUD visual test failed: ${error.message}`);
+          process.exitCode = 1;
+        }
+        app.quit();
+      }, 2_000);
     });
   }
 }
