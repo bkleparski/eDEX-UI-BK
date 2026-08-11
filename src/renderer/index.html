@@ -19,14 +19,8 @@
           </div>
           <div class="session-telemetry hud-label">
             <span id="hudHostname">LOCALHOST</span>
-            <span class="session-divider" aria-hidden="true"></span>
-            <time id="hudDate" datetime="">----</time>
           </div>
           <div class="top-status-zone">
-            <time class="hud-clock" id="hudClock" datetime="">
-              <span id="clockHours">--:--</span><span id="clockSeconds">:--</span>
-            </time>
-            <span class="status-divider" aria-hidden="true"></span>
             <div class="shell-status hud-label" id="shellStatus" data-state="starting">
               <span id="shellStatusText">LINK STARTING</span>
             </div>
@@ -35,44 +29,112 @@
       </header>
 
       <main class="workspace">
-        <aside class="side-panel panel hud-frame boot-frame" id="systemPanel" aria-labelledby="systemPanelTitle">
-          <div class="panel-content boot-content boot-content--left">
-            <header class="panel-heading">
-              <h2 class="hud-title" id="systemPanelTitle">SYSTEM</h2>
-              <span class="hud-label" id="monitoringStatusText">SYNCING</span>
-            </header>
+        <aside class="telemetry-panel panel hud-frame boot-frame" id="telemetryPanel" aria-label="Telemetria systemu i pliki">
+          <div class="telemetry-column boot-content boot-content--left">
+            <section class="data-section time-section" aria-labelledby="timeSectionTitle">
+              <span class="hud-label section-kicker" id="timeSectionTitle">LOCAL TIME</span>
+              <time class="column-clock" id="hudClock" datetime="">
+                <span id="clockHours">--:--</span><span id="clockSeconds">:--</span>
+              </time>
+              <div class="time-meta hud-label">
+                <time id="hudDate" datetime="">----</time>
+                <span class="time-meta-divider" aria-hidden="true"></span>
+                <span>UPTIME <strong id="uptimeValue">--</strong></span>
+              </div>
+            </section>
 
-            <div class="telemetry-stack" aria-live="polite">
-              <section class="metric-block" aria-labelledby="cpuMetricTitle">
-                <div class="metric-heading">
-                  <span class="hud-label" id="cpuMetricTitle">CPU LOAD</span>
-                  <span class="metric-value" id="cpuValue">--</span>
+            <section class="data-section system-section" aria-labelledby="systemPanelTitle">
+              <header class="section-heading">
+                <h2 class="hud-title" id="systemPanelTitle">SYSTEM</h2>
+                <span class="hud-label" id="monitoringStatusText">SYNCING</span>
+              </header>
+              <div class="section-body" aria-live="polite">
+                <div class="metric-block cpu-block" aria-labelledby="cpuMetricTitle">
+                  <div class="metric-heading">
+                    <span class="hud-label" id="cpuMetricTitle">CPU LOAD</span>
+                    <span class="metric-value" id="cpuValue">--</span>
+                  </div>
+                  <svg class="sparkline" viewBox="0 0 100 34" preserveAspectRatio="none" role="img" aria-label="Historia obciążenia CPU">
+                    <polyline id="cpuSparkline" points="0,34 100,34"></polyline>
+                  </svg>
+                  <div class="core-grid" id="cpuCores" aria-label="Obciążenie rdzeni CPU"></div>
                 </div>
-                <svg class="sparkline" viewBox="0 0 100 34" preserveAspectRatio="none" role="img" aria-label="Historia obciążenia CPU">
-                  <polyline id="cpuSparkline" points="0,34 100,34"></polyline>
-                </svg>
-                <div class="core-grid" id="cpuCores" aria-label="Obciążenie rdzeni CPU"></div>
-              </section>
 
-              <section class="metric-block" aria-labelledby="memoryMetricTitle">
-                <div class="metric-heading">
-                  <span class="hud-label" id="memoryMetricTitle">MEMORY</span>
-                  <span class="metric-value" id="memoryValue">--</span>
+                <div class="metric-block memory-block" aria-labelledby="memoryMetricTitle">
+                  <div class="metric-heading">
+                    <span class="hud-label" id="memoryMetricTitle">MEMORY</span>
+                    <span class="metric-value" id="memoryValue">--</span>
+                  </div>
+                  <div class="meter" aria-hidden="true"><span id="memoryMeter"></span></div>
+                  <div class="metric-pairs hud-label">
+                    <span>USED <strong id="memoryUsed">--</strong></span>
+                    <span>FREE <strong id="memoryAvailable">--</strong></span>
+                  </div>
                 </div>
-                <div class="meter" aria-hidden="true"><span id="memoryMeter"></span></div>
-                <div class="metric-pairs hud-label">
-                  <span>USED <strong id="memoryUsed">--</strong></span>
-                  <span>FREE <strong id="memoryAvailable">--</strong></span>
+                <div class="telemetry-error hud-label" id="systemError" hidden>SYSTEM DATA N/A</div>
+              </div>
+            </section>
+
+            <section class="data-section network-section" aria-labelledby="networkPanelTitle">
+              <header class="section-heading">
+                <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
+                <span class="hud-label" id="networkInterface">INTERFACE --</span>
+              </header>
+              <div class="section-body" aria-live="polite">
+                <div class="network-summary">
+                  <div class="network-values">
+                    <div>
+                      <span class="hud-label">DOWN</span>
+                      <strong class="metric-value metric-value--small" id="networkDown">--</strong>
+                    </div>
+                    <div>
+                      <span class="hud-label">UP</span>
+                      <strong class="metric-value metric-value--small" id="networkUp">--</strong>
+                    </div>
+                    <div class="disk-compact">
+                      <span class="hud-label">DISK</span>
+                      <strong class="metric-value metric-value--small" id="diskValue">--</strong>
+                    </div>
+                  </div>
+                  <svg class="sparkline sparkline--network" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Historia transferu sieciowego">
+                    <polyline class="sparkline-secondary" id="networkUpSparkline" points="0,28 100,28"></polyline>
+                    <polyline id="networkDownSparkline" points="0,28 100,28"></polyline>
+                  </svg>
+                  <div class="meter" aria-hidden="true"><span id="diskMeter"></span></div>
+                  <div class="metric-pairs hud-label disk-pairs">
+                    <span>USED <strong id="diskUsed">--</strong></span>
+                    <span>FREE <strong id="diskAvailable">--</strong></span>
+                  </div>
                 </div>
-              </section>
+                <div class="process-block" aria-labelledby="processMetricTitle">
+                  <div class="metric-heading process-heading">
+                    <span class="hud-label" id="processMetricTitle">TOP PROCESSES</span>
+                    <span class="hud-label">CPU</span>
+                  </div>
+                  <ol class="process-list" id="processList">
+                    <li class="process-empty hud-label">AWAITING DATA</li>
+                  </ol>
+                </div>
+                <div class="telemetry-error hud-label" id="networkError" hidden>NETWORK DATA N/A</div>
+              </div>
+            </section>
 
-              <section class="metric-block uptime-block" aria-labelledby="uptimeMetricTitle">
-                <span class="hud-label" id="uptimeMetricTitle">UPTIME</span>
-                <strong class="uptime-value" id="uptimeValue">--</strong>
-              </section>
-
-              <div class="telemetry-error hud-label" id="systemError" hidden>SYSTEM DATA N/A</div>
-            </div>
+            <section class="data-section files-section" aria-labelledby="filesSectionTitle">
+              <header class="section-heading">
+                <h2 class="hud-title" id="filesSectionTitle">FILE SYSTEM</h2>
+                <div class="file-heading-meta hud-label">
+                  <span id="fileBrowserSession">TTY --</span>
+                  <span id="fileBrowserCount">-- ITEMS</span>
+                </div>
+              </header>
+              <div class="file-browser" id="filesView">
+                <div class="file-browser__cwd" id="fileBrowserCwd" title="">CWD / --</div>
+                <ol class="file-list" id="fileList" aria-live="polite">
+                  <li class="file-empty hud-label">AWAITING PTY</li>
+                </ol>
+                <div class="telemetry-error hud-label" id="fileBrowserError" hidden>DIRECTORY DATA N/A</div>
+              </div>
+            </section>
           </div>
         </aside>
 
@@ -86,90 +148,19 @@
             <div class="terminal-sessions" id="terminalSessions"></div>
           </div>
         </section>
-
-        <aside class="side-panel panel hud-frame boot-frame" id="networkPanel" aria-labelledby="networkPanelTitle">
-          <div class="panel-content boot-content boot-content--right">
-            <header class="panel-heading panel-heading--switchable">
-              <div class="panel-tabs" id="rightPanelTabs" role="tablist" aria-label="Tryb prawego panelu">
-                <button class="panel-tab hud-title is-active" id="networkViewTab" type="button" role="tab" aria-selected="true" aria-controls="networkView">NETWORK</button>
-                <button class="panel-tab hud-title" id="filesViewTab" type="button" role="tab" aria-selected="false" aria-controls="filesView">FILES</button>
-              </div>
-              <span class="hud-label" id="networkInterface">INTERFACE --</span>
-            </header>
-
-            <div class="telemetry-stack telemetry-stack--right" id="networkView" role="tabpanel" aria-labelledby="networkViewTab" aria-live="polite">
-              <section class="metric-block network-block" aria-labelledby="networkMetricTitle">
-                <span class="hud-label metric-section-label" id="networkMetricTitle">THROUGHPUT</span>
-                <div class="network-values">
-                  <div>
-                    <span class="hud-label">DOWN</span>
-                    <strong class="metric-value metric-value--small" id="networkDown">--</strong>
-                  </div>
-                  <div>
-                    <span class="hud-label">UP</span>
-                    <strong class="metric-value metric-value--small" id="networkUp">--</strong>
-                  </div>
-                </div>
-                <svg class="sparkline sparkline--network" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Historia transferu sieciowego">
-                  <polyline class="sparkline-secondary" id="networkUpSparkline" points="0,28 100,28"></polyline>
-                  <polyline id="networkDownSparkline" points="0,28 100,28"></polyline>
-                </svg>
-              </section>
-
-              <section class="metric-block" aria-labelledby="diskMetricTitle">
-                <div class="metric-heading">
-                  <span class="hud-label" id="diskMetricTitle">DATA VOLUME</span>
-                  <span class="metric-value metric-value--small" id="diskValue">--</span>
-                </div>
-                <div class="meter" aria-hidden="true"><span id="diskMeter"></span></div>
-                <div class="metric-pairs hud-label">
-                  <span>USED <strong id="diskUsed">--</strong></span>
-                  <span>FREE <strong id="diskAvailable">--</strong></span>
-                </div>
-              </section>
-
-              <section class="metric-block process-block" aria-labelledby="processMetricTitle">
-                <div class="metric-heading">
-                  <span class="hud-label" id="processMetricTitle">TOP PROCESSES</span>
-                  <span class="hud-label">CPU</span>
-                </div>
-                <ol class="process-list" id="processList">
-                  <li class="process-empty hud-label">AWAITING DATA</li>
-                </ol>
-              </section>
-
-              <div class="telemetry-error hud-label" id="networkError" hidden>NETWORK DATA N/A</div>
-            </div>
-
-            <div class="file-browser" id="filesView" role="tabpanel" aria-labelledby="filesViewTab" hidden>
-              <div class="file-browser__meta">
-                <span class="hud-label" id="fileBrowserSession">TTY --</span>
-                <span class="hud-label" id="fileBrowserCount">-- ITEMS</span>
-              </div>
-              <div class="file-browser__cwd" id="fileBrowserCwd" title="">CWD / --</div>
-              <ol class="file-list" id="fileList" aria-live="polite">
-                <li class="file-empty hud-label">AWAITING PTY</li>
-              </ol>
-              <div class="telemetry-error hud-label" id="fileBrowserError" hidden>DIRECTORY DATA N/A</div>
-            </div>
-          </div>
-        </aside>
       </main>
 
       <footer class="bottom-hud panel hud-frame boot-frame">
         <div class="bottom-hud__content boot-content boot-content--bottom">
           <span class="hud-label input-route">INPUT ROUTE / LOCAL PTY</span>
           <div class="shortcut-legend hud-label" aria-label="Skróty klawiszowe">
-            <span><kbd>⌘1</kbd> SYS</span>
-            <span><kbd>⌘2</kbd> NET</span>
-            <span><kbd>⌘3</kbd> FILES</span>
+            <span><kbd>⌘1</kbd> DATA</span>
             <span><kbd>⇧⌘L</kbd> SCAN</span>
             <span><kbd>⇧⌘S</kbd> AUDIO</span>
             <span><kbd>⌘T</kbd> TTY</span>
           </div>
           <div class="status-chips" aria-label="Stan interfejsu">
-            <button class="status-chip hud-label is-on" id="systemPanelToggle" type="button" aria-pressed="true">SYS <span id="systemPanelState">ON</span></button>
-            <button class="status-chip hud-label is-on" id="networkPanelToggle" type="button" aria-pressed="true">NET <span id="networkPanelState">ON</span></button>
+            <button class="status-chip hud-label is-on" id="telemetryPanelToggle" type="button" aria-pressed="true">DATA <span id="telemetryPanelState">ON</span></button>
             <button class="status-chip hud-label" id="scanlinesToggle" type="button" aria-pressed="false">SCANLINES <span id="scanlinesState">OFF</span></button>
             <button class="status-chip hud-label" id="soundToggle" type="button" aria-pressed="false">SOUND <span id="soundState">OFF</span></button>
           </div>

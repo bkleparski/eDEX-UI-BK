@@ -37,10 +37,9 @@
      Technika "tight + wide": ciasny jasny rdzen + szeroki slaby ambient.
      Max 3 warstwy, nigdy bial w rdzeniu (bial tylko dla stanu "hot"). */
   --glow-title:
-    0 0 3px  rgb(var(--cyan-bright-rgb) / .80),
-    0 0 12px rgb(var(--cyan-rgb) / .35),
-    0 0 30px rgb(var(--cyan-rgb) / .15);
-  --glow-label: 0 0 6px rgb(var(--cyan-dim-rgb) / .40);
+    0 0 2px rgb(var(--cyan-bright-rgb) / .55),
+    0 0 6px rgb(var(--cyan-rgb) / .18);
+  --glow-label: 0 0 3px rgb(var(--cyan-dim-rgb) / .24);
   --glow-warning:
     0 0 3px  rgb(var(--amber-rgb) / .80),
     0 0 14px rgb(var(--amber-rgb) / .30);
@@ -49,9 +48,9 @@
      outset + inset naraz = efekt neonowej rurki, nie rozmazanej plamy. */
   --panel-border: 1px solid rgb(var(--cyan-rgb) / .35);
   --panel-glow:
-    0 0 8px rgb(var(--cyan-rgb) / .25),
-    inset 0 0 8px rgb(var(--cyan-rgb) / .08);
-  --panel-bg: rgb(var(--cyan-dim-rgb) / .05);
+    0 0 3px rgb(var(--cyan-rgb) / .12),
+    inset 0 0 3px rgb(var(--cyan-rgb) / .035);
+  --panel-bg: rgb(var(--cyan-dim-rgb) / .028);
 
   /* --- HUD corner brackets ---
      Rogi celowo grubsze (2px) i pelny cyjan; ramka cienka (1px) i przygaszona.
@@ -59,7 +58,7 @@
   --bracket-size:  14px;
   --bracket-width: 2px;
   --bracket-color: var(--cyan);
-  --bracket-glow:  drop-shadow(0 0 4px rgb(var(--cyan-rgb) / .5));
+  --bracket-glow:  drop-shadow(0 0 2px rgb(var(--cyan-rgb) / .28));
 
   /* --- Fonty ---
      Pliki do pobrania do src/renderer/assets/fonts/:

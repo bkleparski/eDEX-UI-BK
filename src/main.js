@@ -412,8 +412,15 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    frame: false,
-    fullscreen: !isAutomatedTest,
+    minWidth: 960,
+    minHeight: 640,
+    center: true,
+    frame: true,
+    fullscreen: false,
+    fullscreenable: true,
+    resizable: true,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 27, y: 36 },
     show: !isAutomatedTest,
     backgroundColor: '#02080a',
     webPreferences: {
@@ -451,15 +458,24 @@ function createWindow() {
           press('KeyT');
           press('Digit1');
           press('Digit1');
-          press('Digit2');
-          press('Digit2');
-          press('Digit3');
+          if (document.body.classList.contains('scanlines-on')) press('KeyL', true);
           press('KeyL', true);
           press('KeyL', true);
           if (document.body.dataset.soundEnabled === 'true') press('KeyS', true);
           press('KeyS', true);
           press('KeyS', true);
-          setTimeout(() => window.terminalApi.write('tty-02', 'cd /tmp\\r'), 600);
+          setTimeout(() => window.terminalApi.write('tty-02', 'exit\\r'), 500);
+          setTimeout(() => window.terminalApi.write('tty-01', 'exit\\r'), 1_300);
+          const changeRespawnedSessionDirectory = (attempt = 0) => {
+            const activeTab = document.querySelector('#ttyTabs .tty-tab.is-active')?.textContent;
+            const shellOnline = document.getElementById('shellStatusText').textContent === 'LINK ONLINE';
+            if (activeTab === 'TTY 03' && shellOnline) {
+              window.terminalApi.write('tty-03', 'cd /tmp\\r');
+            } else if (attempt < 20) {
+              setTimeout(() => changeRespawnedSessionDirectory(attempt + 1), 250);
+            }
+          };
+          setTimeout(changeRespawnedSessionDirectory, 2_200);
         })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
       }, 2_000);
 
@@ -472,6 +488,12 @@ function createWindow() {
               labels: document.fonts.check('500 11px "Chakra Petch"')
             },
             bootComplete: document.body.classList.contains('boot-complete'),
+            windowMode: {
+              fullscreen: ${window.isFullScreen()},
+              fullscreenable: ${window.isFullScreenable()},
+              resizable: ${window.isResizable()},
+              bounds: ${JSON.stringify(window.getBounds())}
+            },
             scanlinesEnabled: document.body.classList.contains('scanlines-on'),
             shellStatus: document.getElementById('shellStatusText').textContent,
             hostname: document.getElementById('hudHostname').textContent,
@@ -480,14 +502,14 @@ function createWindow() {
             uptime: document.getElementById('uptimeValue').textContent,
             terminalSessionCount: document.querySelectorAll('#ttyTabs .tty-tab').length,
             activeTerminal: document.querySelector('#ttyTabs .tty-tab.is-active')?.textContent || null,
-            systemPanelOn: !document.body.classList.contains('system-panel-hidden'),
-            networkPanelOn: !document.body.classList.contains('network-panel-hidden'),
-            systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
-            networkToggleCount: Number(document.body.dataset.networkToggleCount || 0),
+            terminalExitCount: Number(document.body.dataset.terminalExitCount || 0),
+            terminalRespawnCount: Number(document.body.dataset.terminalRespawnCount || 0),
+            terminalOfflineMarker: document.querySelector('.terminal-instance:not([hidden])')?.textContent.includes('SHELL OFFLINE') || false,
+            telemetryPanelOn: !document.body.classList.contains('telemetry-panel-hidden'),
+            telemetryToggleCount: Number(document.body.dataset.telemetryToggleCount || 0),
             scanlinesToggleCount: Number(document.body.dataset.scanlinesToggleCount || 0),
             soundEnabled: document.body.dataset.soundEnabled === 'true',
             soundToggleCount: Number(document.body.dataset.soundToggleCount || 0),
-            rightPanelView: document.body.dataset.rightPanelView,
             fileBrowserReady: document.body.dataset.fileBrowserReady === 'true',
             fileBrowserCwd: document.getElementById('fileBrowserCwd').textContent,
             fileCount: document.querySelectorAll('#fileList .file-row').length,
@@ -501,6 +523,19 @@ function createWindow() {
             diskValue: document.getElementById('diskValue').textContent,
             processCount: document.querySelectorAll('#processList .process-row').length,
             gridColumns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns,
+            telemetryGeometry: (() => {
+              const panel = document.getElementById('telemetryPanel').getBoundingClientRect();
+              const column = document.querySelector('.telemetry-column');
+              const list = document.getElementById('fileList');
+              return {
+                width: panel.width,
+                height: panel.height,
+                columnClientHeight: column.clientHeight,
+                columnScrollHeight: column.scrollHeight,
+                fileListClientHeight: list.clientHeight,
+                fileListScrollHeight: list.scrollHeight
+              };
+            })(),
             terminalGeometry: (() => {
               const screen = document.querySelector('.terminal-instance:not([hidden]) .xterm-screen').getBoundingClientRect();
               return { width: screen.width, height: screen.height };
@@ -508,31 +543,40 @@ function createWindow() {
           })`);
           diagnostics.packaged = app.isPackaged;
           const screenshot = await window.webContents.capturePage();
+          console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
           if (!diagnostics.monitoringReady || diagnostics.monitoringSamples < 2) {
             throw new Error('Monitoring did not provide at least two samples');
           }
-          if (diagnostics.terminalSessionCount !== 2 || diagnostics.activeTerminal !== 'TTY 02') {
-            throw new Error('Cmd+T did not create and activate the second PTY session');
+          if (diagnostics.windowMode.fullscreen || !diagnostics.windowMode.fullscreenable
+            || !diagnostics.windowMode.resizable || diagnostics.windowMode.bounds.width !== 1440
+            || diagnostics.windowMode.bounds.height !== 900) {
+            throw new Error('Window did not start as a resizable 1440x900 macOS window');
           }
-          if (!diagnostics.systemPanelOn || !diagnostics.networkPanelOn || diagnostics.shortcutCount !== 6
-            || diagnostics.systemToggleCount !== 2 || diagnostics.networkToggleCount !== 2
+          if (diagnostics.terminalSessionCount !== 1 || diagnostics.activeTerminal !== 'TTY 03'
+            || diagnostics.terminalExitCount !== 2 || diagnostics.terminalRespawnCount !== 1
+            || diagnostics.terminalOfflineMarker || diagnostics.shellStatus !== 'LINK ONLINE') {
+            throw new Error('PTY exit lifecycle did not close tabs and respawn the final session');
+          }
+          if (!diagnostics.telemetryPanelOn || diagnostics.shortcutCount !== 4
+            || diagnostics.telemetryToggleCount !== 2
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
             || diagnostics.soundToggleCount < 3 || diagnostics.soundEnabled) {
-            throw new Error('HUD shortcut test did not restore the expected panel state');
+            throw new Error('HUD shortcut test did not restore the expected state');
           }
-          if (diagnostics.rightPanelView !== 'files' || !diagnostics.fileBrowserReady
-            || !diagnostics.fileBrowserCwd.includes('tmp') || diagnostics.fileCount < 1) {
+          if (!diagnostics.fileBrowserReady || !diagnostics.fileBrowserCwd.includes('tmp') || diagnostics.fileCount < 1) {
             throw new Error('File browser did not follow the active PTY working directory');
           }
-          if (diagnostics.terminalGeometry.width < 100 || diagnostics.terminalGeometry.height < 100) {
-            throw new Error('Active terminal has invalid geometry');
+          if (diagnostics.telemetryGeometry.width < 320 || diagnostics.telemetryGeometry.width > 340
+            || diagnostics.telemetryGeometry.columnScrollHeight > diagnostics.telemetryGeometry.columnClientHeight + 2
+            || diagnostics.telemetryGeometry.fileListClientHeight < 30
+            || diagnostics.terminalGeometry.width < 850 || diagnostics.terminalGeometry.height < 100) {
+            throw new Error('Two-column layout has invalid geometry or scroll ownership');
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            app.isPackaged ? 'edex-ui-bk-phase5-packaged.png' : 'edex-ui-bk-phase4.png'
+            app.isPackaged ? 'edex-ui-bk-phase6-packaged.png' : 'edex-ui-bk-phase6.png'
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
-          console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
           console.log(`Visual test screenshot: ${screenshotPath}`);
           process.exitCode = 0;
         } catch (error) {
@@ -540,7 +584,7 @@ function createWindow() {
           process.exitCode = 1;
         }
         app.quit();
-      }, 7_000);
+      }, 10_500);
     });
   }
 }

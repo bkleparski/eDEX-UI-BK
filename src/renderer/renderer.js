@@ -44,10 +44,9 @@ let smokeOutput = '';
 let smokeCompleted = false;
 let audioContext = null;
 let soundEnabled = false;
-let rightPanelView = 'network';
 let fileRefreshTimer = null;
 let fileRefreshInFlight = false;
-let lastNetworkInterface = 'INTERFACE --';
+let rendererShuttingDown = false;
 const telemetryHistory = {
   cpu: [],
   networkDown: [],
@@ -187,8 +186,7 @@ function renderMonitoring(sample) {
 
   const down = sample.network?.downBytesPerSecond;
   const up = sample.network?.upBytesPerSecond;
-  lastNetworkInterface = sample.network?.interface ? `INTERFACE ${sample.network.interface}` : 'INTERFACE N/A';
-  if (rightPanelView === 'network') document.getElementById('networkInterface').textContent = lastNetworkInterface;
+  document.getElementById('networkInterface').textContent = sample.network?.interface ? `INTERFACE ${sample.network.interface}` : 'INTERFACE N/A';
   document.getElementById('networkDown').textContent = formatRate(down);
   document.getElementById('networkUp').textContent = formatRate(up);
   pushHistory(telemetryHistory.networkDown, down);
@@ -365,7 +363,7 @@ function renderFileBrowser(result) {
 }
 
 async function refreshFileBrowser() {
-  if (rightPanelView !== 'files' || document.body.classList.contains('network-panel-hidden') || fileRefreshInFlight) return;
+  if (document.body.classList.contains('telemetry-panel-hidden') || fileRefreshInFlight) return;
   const requestedSessionId = activeSessionId;
   if (!requestedSessionId) {
     renderFileBrowser(null);
@@ -375,37 +373,15 @@ async function refreshFileBrowser() {
   fileRefreshInFlight = true;
   try {
     const result = await window.filesApi.list(requestedSessionId);
-    if (requestedSessionId === activeSessionId && rightPanelView === 'files') renderFileBrowser(result);
+    if (requestedSessionId === activeSessionId) renderFileBrowser(result);
   } catch {
-    if (requestedSessionId === activeSessionId && rightPanelView === 'files') renderFileBrowser(null);
+    if (requestedSessionId === activeSessionId) renderFileBrowser(null);
   } finally {
     fileRefreshInFlight = false;
   }
 }
 
-function setRightPanelView(view) {
-  rightPanelView = view === 'files' ? 'files' : 'network';
-  const filesActive = rightPanelView === 'files';
-  document.getElementById('networkView').hidden = filesActive;
-  document.getElementById('filesView').hidden = !filesActive;
-  document.getElementById('networkViewTab').classList.toggle('is-active', !filesActive);
-  document.getElementById('filesViewTab').classList.toggle('is-active', filesActive);
-  document.getElementById('networkViewTab').setAttribute('aria-selected', String(!filesActive));
-  document.getElementById('filesViewTab').setAttribute('aria-selected', String(filesActive));
-  document.getElementById('networkInterface').textContent = filesActive ? 'READ ONLY' : lastNetworkInterface;
-  document.body.dataset.rightPanelView = rightPanelView;
-  if (filesActive) refreshFileBrowser();
-}
-
-function toggleFilesView() {
-  if (document.body.classList.contains('network-panel-hidden')) updatePanelVisibility('network', true);
-  setRightPanelView(rightPanelView === 'files' ? 'network' : 'files');
-  focusTerminal();
-}
-
 function initializeFileBrowser() {
-  document.getElementById('networkViewTab').addEventListener('click', () => setRightPanelView('network'));
-  document.getElementById('filesViewTab').addEventListener('click', () => setRightPanelView('files'));
   fileRefreshTimer = setInterval(refreshFileBrowser, 1_500);
   window.addEventListener('beforeunload', () => clearInterval(fileRefreshTimer), { once: true });
 }
@@ -480,23 +456,20 @@ function toggleScanlines() {
   focusTerminal();
 }
 
-function updatePanelVisibility(panelName, visible) {
-  const isSystem = panelName === 'system';
-  const bodyClass = isSystem ? 'system-panel-hidden' : 'network-panel-hidden';
-  const button = document.getElementById(isSystem ? 'systemPanelToggle' : 'networkPanelToggle');
-  const state = document.getElementById(isSystem ? 'systemPanelState' : 'networkPanelState');
-  const counterKey = isSystem ? 'systemToggleCount' : 'networkToggleCount';
-  document.body.dataset[counterKey] = String((Number(document.body.dataset[counterKey]) || 0) + 1);
-  document.body.classList.toggle(bodyClass, !visible);
+function updateTelemetryVisibility(visible) {
+  document.body.dataset.telemetryToggleCount = String((Number(document.body.dataset.telemetryToggleCount) || 0) + 1);
+  document.body.classList.toggle('telemetry-panel-hidden', !visible);
+  const button = document.getElementById('telemetryPanelToggle');
+  const state = document.getElementById('telemetryPanelState');
   button.classList.toggle('is-on', visible);
   button.setAttribute('aria-pressed', String(visible));
   state.textContent = visible ? 'ON' : 'OFF';
+  if (visible) refreshFileBrowser();
   focusTerminal();
 }
 
-function togglePanel(panelName) {
-  const bodyClass = panelName === 'system' ? 'system-panel-hidden' : 'network-panel-hidden';
-  updatePanelVisibility(panelName, document.body.classList.contains(bodyClass));
+function toggleTelemetryPanel() {
+  updateTelemetryVisibility(document.body.classList.contains('telemetry-panel-hidden'));
 }
 
 function updateClock() {
@@ -517,8 +490,7 @@ function initializeControls() {
   updateSound(soundEnabled, false);
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
-  document.getElementById('systemPanelToggle').addEventListener('click', () => togglePanel('system'));
-  document.getElementById('networkPanelToggle').addEventListener('click', () => togglePanel('network'));
+  document.getElementById('telemetryPanelToggle').addEventListener('click', toggleTelemetryPanel);
   updateClock();
   const clockTimer = setInterval(updateClock, 1_000);
   window.addEventListener('beforeunload', () => clearInterval(clockTimer), { once: true });
@@ -541,15 +513,7 @@ function initializeControls() {
     if (event.code === 'Digit1') {
       event.preventDefault();
       event.stopPropagation();
-      togglePanel('system');
-    } else if (event.code === 'Digit2') {
-      event.preventDefault();
-      event.stopPropagation();
-      togglePanel('network');
-    } else if (event.code === 'Digit3') {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleFilesView();
+      toggleTelemetryPanel();
     } else if (event.code === 'KeyT') {
       event.preventDefault();
       event.stopPropagation();
@@ -586,8 +550,42 @@ function switchTerminalSession(sessionId) {
     session.tab.tabIndex = active ? 0 : -1;
   }
   updateShellStatus();
-  if (rightPanelView === 'files') refreshFileBrowser();
+  refreshFileBrowser();
   focusTerminal();
+}
+
+function handleTerminalExit(sessionId) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  const sessionOrder = [...terminalSessions.keys()];
+  const exitIndex = sessionOrder.indexOf(sessionId);
+  const wasActive = sessionId === activeSessionId;
+
+  terminalSessions.delete(sessionId);
+  session.tab.remove();
+  session.terminal.dispose();
+  session.container.remove();
+  document.body.dataset.terminalExitCount = String((Number(document.body.dataset.terminalExitCount) || 0) + 1);
+
+  if (isSmokeTest && !smokeCompleted) {
+    smokeCompleted = true;
+    window.terminalApi.reportSmokeResult(false);
+    return;
+  }
+  if (rendererShuttingDown) return;
+
+  const remainingIds = [...terminalSessions.keys()];
+  if (remainingIds.length > 0) {
+    if (wasActive) switchTerminalSession(remainingIds[Math.min(exitIndex, remainingIds.length - 1)]);
+    else refreshFileBrowser();
+    return;
+  }
+
+  activeSessionId = null;
+  updateShellStatus();
+  renderFileBrowser(null);
+  document.body.dataset.terminalRespawnCount = String((Number(document.body.dataset.terminalRespawnCount) || 0) + 1);
+  createTerminalSession().catch((error) => console.error('Terminal respawn failed:', error));
 }
 
 function createTerminalTab(sessionId, label) {
@@ -690,22 +688,14 @@ async function initializeTerminal() {
     }
   });
 
-  window.terminalApi.onExit(({ sessionId, exitCode }) => {
-    const session = terminalSessions.get(sessionId);
-    if (!session) return;
-    session.online = false;
-    session.failed = true;
-    session.terminal.write(`\r\n[SHELL OFFLINE: ${exitCode}]\r\n`);
-    if (sessionId === activeSessionId) updateShellStatus();
-    if (isSmokeTest && sessionId === 'tty-01' && !smokeCompleted) {
-      smokeCompleted = true;
-      window.terminalApi.reportSmokeResult(false);
-    }
-  });
+  window.terminalApi.onExit(({ sessionId }) => handleTerminalExit(sessionId));
 
   const resizeObserver = new ResizeObserver(() => focusTerminal());
   resizeObserver.observe(document.querySelector('.terminal-surface'));
-  window.addEventListener('beforeunload', () => resizeObserver.disconnect(), { once: true });
+  window.addEventListener('beforeunload', () => {
+    rendererShuttingDown = true;
+    resizeObserver.disconnect();
+  }, { once: true });
   await createTerminalSession();
 }
 
