@@ -11,6 +11,7 @@ const si = require('systeminformation');
 const { AssistantService } = require('./main/assistant/assistant-service');
 const { PROVIDER_IDS } = require('./main/assistant/contracts');
 const { LMStudioProvider } = require('./main/assistant/lmstudio-provider');
+const { LocalCliBridge } = require('./main/assistant/local-cli-bridge');
 const { OllamaProvider } = require('./main/assistant/ollama-provider');
 const { OpenCodeGoProvider } = require('./main/assistant/opencode-go-provider');
 const { OpenRouterProvider } = require('./main/assistant/openrouter-provider');
@@ -37,6 +38,7 @@ const assistantRequests = new Map();
 let configStore;
 let providerRegistry;
 let assistantService;
+let localCliBridge;
 let smokeTimeout;
 let gracefulShutdownStarted = false;
 
@@ -682,6 +684,9 @@ function registerTerminalIpc() {
     const cols = Number.isInteger(options.cols) ? Math.min(Math.max(options.cols, 2), 500) : 80;
     const rows = Number.isInteger(options.rows) ? Math.min(Math.max(options.rows, 1), 300) : 24;
     const shell = '/bin/zsh';
+    const assistantBinPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'bin')
+      : path.join(__dirname, '..', 'resources', 'bin');
     const terminal = pty.spawn(shell, ['-l'], {
       name: 'xterm-256color',
       cols,
@@ -691,7 +696,8 @@ function registerTerminalIpc() {
         ...process.env,
         SHELL: shell,
         TERM: 'xterm-256color',
-        COLORTERM: 'truecolor'
+        COLORTERM: 'truecolor',
+        ...localCliBridge?.environment(assistantBinPath)
       }
     });
 
@@ -1735,11 +1741,17 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   configStore = new ConfigStore(app.getPath('userData'));
   providerRegistry = new ProviderRegistry([new OllamaProvider(), new LMStudioProvider()]);
   configureCloudProviders();
   assistantService = new AssistantService({ registry: providerRegistry, configStore });
+  localCliBridge = new LocalCliBridge({ userDataPath: app.getPath('userData'), assistantService, configStore });
+  try {
+    await localCliBridge.start();
+  } catch (error) {
+    console.error(`Local assistant CLI bridge unavailable: ${error.message}`);
+  }
   registerTerminalIpc();
   registerFilesIpc();
   registerMonitoringIpc();
@@ -1769,5 +1781,6 @@ app.on('before-quit', (event) => {
   for (const webContentsId of assistantRequests.keys()) {
     disposeAssistantRequests(webContentsId);
   }
+  localCliBridge?.stop().catch((error) => console.error(`Cannot stop local assistant CLI bridge: ${error.message}`));
   setTimeout(() => app.exit(process.exitCode || 0), 250);
 });

@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+provider="ollama"
+if [ "${1-}" = "--lms" ]; then
+  provider="lmstudio"
+  shift
+fi
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: ai [--lms] <prompt>" >&2
+  exit 64
+fi
+
+: "${EDEX_AI_SOCKET:?ai is available only inside eDEX-UI BK}"
+: "${EDEX_AI_TOKEN:?ai bridge token is unavailable}"
+
+printf '%s' "$*" | /usr/bin/curl --silent --show-error --no-buffer \
+  --unix-socket "$EDEX_AI_SOCKET" \
+  --request POST \
+  --header "Authorization: Bearer $EDEX_AI_TOKEN" \
+  --header "X-eDEX-Provider: $provider" \
+  --data-binary @- \
+  http://localhost/ai

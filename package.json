@@ -12,6 +12,7 @@
     "rebuild:native": "electron-builder install-app-deps --arch=arm64",
     "test:unit": "node --test",
     "test:providers:local": "node scripts/local-provider-check.js",
+    "test:cli:local": "node scripts/local-cli-check.js",
     "test:smoke": "EDEX_SMOKE_TEST=1 electron .",
     "test:visual": "EDEX_VISUAL_TEST=1 electron ."
   },
@@ -39,6 +40,16 @@
     "files": [
       "src/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "ai",
+          "search"
+        ]
+      }
     ],
     "directories": {
       "buildResources": "build",
