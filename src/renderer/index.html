@@ -21,6 +21,8 @@
             <span id="hudHostname">LOCALHOST</span>
           </div>
           <div class="top-status-zone">
+            <button class="top-action hud-label" id="assistantToggle" type="button" aria-controls="assistantPanel" aria-expanded="false">AI</button>
+            <button class="top-action hud-label" id="settingsToggle" type="button" aria-controls="settingsDialog" aria-expanded="false">SETTINGS</button>
             <div class="shell-status hud-label" id="shellStatus" data-state="starting">
               <span id="shellStatusText">LINK STARTING</span>
             </div>
@@ -181,6 +183,41 @@
             <div class="terminal-sessions" id="terminalSessions"></div>
           </div>
         </section>
+
+        <aside class="assistant-panel panel hud-frame" id="assistantPanel" aria-labelledby="assistantPanelTitle" hidden>
+          <header class="assistant-heading">
+            <div>
+              <span class="hud-label section-kicker">INFERENCE LINK</span>
+              <h2 class="hud-title" id="assistantPanelTitle">ASSISTANT</h2>
+            </div>
+            <button class="icon-action hud-label" id="assistantClose" type="button" aria-label="Close assistant panel">CLOSE</button>
+          </header>
+          <div class="assistant-routing">
+            <label class="field-label hud-label" for="hudProvider">PROVIDER</label>
+            <select class="hud-select" id="hudProvider">
+              <option value="ollama">OLLAMA / LOCAL</option>
+              <option value="lmstudio">LM STUDIO / LOCAL</option>
+              <option value="openrouter">OPENROUTER / CLOUD</option>
+              <option value="opencode-go">OPENCODE GO / CLOUD</option>
+            </select>
+            <label class="field-label hud-label" for="hudModel">MODEL</label>
+            <select class="hud-select" id="hudModel"></select>
+            <button class="text-action hud-label" id="newConversation" type="button">NEW THREAD</button>
+          </div>
+          <div class="assistant-status hud-label" id="assistantStatus" role="status">READY</div>
+          <ol class="assistant-messages" id="assistantMessages" aria-live="polite">
+            <li class="assistant-empty hud-label" id="assistantEmpty">LOCAL OR CLOUD LINK READY</li>
+          </ol>
+          <form class="assistant-composer" id="assistantForm">
+            <label class="sr-only" for="assistantPrompt">Prompt</label>
+            <textarea id="assistantPrompt" rows="3" maxlength="32000" placeholder="ENTER QUERY" required></textarea>
+            <div class="assistant-composer__actions">
+              <label class="search-mode hud-label"><input id="assistantSearchMode" type="checkbox"> FORCE WEB SEARCH</label>
+              <button class="text-action hud-label" id="assistantCancel" type="button" hidden>CANCEL</button>
+              <button class="primary-action hud-label" id="assistantSubmit" type="submit">TRANSMIT</button>
+            </div>
+          </form>
+        </aside>
       </main>
 
       <div class="tty-context-menu hud-frame" id="ttyContextMenu" role="menu"
@@ -223,6 +260,80 @@
       <div class="file-image-preview__label" id="fileImagePreviewLabel"></div>
     </div>
 
+    <div class="settings-backdrop" id="settingsDialog" role="dialog" aria-modal="true"
+      aria-labelledby="settingsTitle" aria-hidden="true" hidden>
+      <section class="settings-panel panel hud-frame">
+        <header class="settings-heading">
+          <div>
+            <span class="hud-label section-kicker">CONFIG / PLAINTEXT USERDATA</span>
+            <h2 class="hud-title" id="settingsTitle">ASSISTANT SETTINGS</h2>
+          </div>
+          <button class="icon-action hud-label" id="settingsClose" type="button">CLOSE</button>
+        </header>
+        <div class="settings-body">
+          <section class="settings-section">
+            <h3 class="hud-label">LOCAL INFERENCE</h3>
+            <div class="settings-grid">
+              <label class="field-label hud-label" for="localProvider">DEFAULT PROVIDER</label>
+              <select class="hud-select" id="localProvider">
+                <option value="ollama">OLLAMA / 127.0.0.1:11434</option>
+                <option value="lmstudio">LM STUDIO / 127.0.0.1:1234</option>
+              </select>
+              <label class="field-label hud-label" for="localModel">ACTIVE MODEL</label>
+              <div class="field-with-action">
+                <select class="hud-select" id="localModel"></select>
+                <button class="text-action hud-label" type="button" data-refresh-provider="local">REFRESH</button>
+              </div>
+            </div>
+          </section>
+          <section class="settings-section">
+            <h3 class="hud-label">WEB SEARCH</h3>
+            <div class="settings-grid">
+              <label class="field-label hud-label" for="braveApiKey">BRAVE API KEY</label>
+              <input class="hud-input" id="braveApiKey" type="password" autocomplete="off" placeholder="UNCHANGED">
+              <span class="credential-state hud-label" id="braveState">NOT CONFIGURED</span>
+            </div>
+          </section>
+          <section class="settings-section">
+            <h3 class="hud-label">OPENROUTER</h3>
+            <div class="settings-grid">
+              <label class="field-label hud-label" for="openRouterApiKey">API KEY</label>
+              <div class="field-with-action">
+                <input class="hud-input" id="openRouterApiKey" type="password" autocomplete="off" placeholder="UNCHANGED">
+                <button class="text-action hud-label" type="button" data-test-provider="openrouter">TEST</button>
+              </div>
+              <label class="field-label hud-label" for="openRouterModel">ACTIVE MODEL</label>
+              <div class="field-with-action">
+                <select class="hud-select" id="openRouterModel"></select>
+                <button class="text-action hud-label" type="button" data-refresh-provider="openrouter">REFRESH</button>
+              </div>
+              <span class="credential-state hud-label" id="openRouterState">NOT CONFIGURED</span>
+            </div>
+          </section>
+          <section class="settings-section">
+            <h3 class="hud-label">OPENCODE GO</h3>
+            <div class="settings-grid">
+              <label class="field-label hud-label" for="openCodeGoApiKey">API KEY</label>
+              <div class="field-with-action">
+                <input class="hud-input" id="openCodeGoApiKey" type="password" autocomplete="off" placeholder="UNCHANGED">
+                <button class="text-action hud-label" type="button" data-test-provider="opencode-go">CATALOG TEST</button>
+              </div>
+              <label class="field-label hud-label" for="openCodeGoModel">ACTIVE MODEL</label>
+              <div class="field-with-action">
+                <select class="hud-select" id="openCodeGoModel"></select>
+                <button class="text-action hud-label" type="button" data-refresh-provider="opencode-go">REFRESH</button>
+              </div>
+              <span class="credential-state hud-label" id="openCodeGoState">NOT CONFIGURED</span>
+            </div>
+          </section>
+        </div>
+        <footer class="settings-footer">
+          <span class="settings-status hud-label" id="settingsStatus" role="status">READY</span>
+          <button class="primary-action hud-label" id="settingsSave" type="button">SAVE CONFIG</button>
+        </footer>
+      </section>
+    </div>
+
     <div class="vignette" aria-hidden="true"></div>
     <div class="scanlines" aria-hidden="true"></div>
 
@@ -237,5 +348,6 @@
     <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="renderer.js"></script>
+    <script src="assistant-ui.js"></script>
   </body>
 </html>
