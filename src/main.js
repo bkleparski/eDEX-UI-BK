@@ -1933,6 +1933,43 @@ function createWindow() {
             inspect();
           })`);
 
+          const nativeResizeBefore = await window.webContents.executeJavaScript(`(() => {
+            const handle = document.getElementById('assistantResizer');
+            const rect = handle.getBoundingClientRect();
+            const y = rect.top + Math.min(80, rect.height / 2);
+            return {
+              x: Math.round(rect.left + rect.width / 2),
+              y: Math.round(y),
+              width: document.getElementById('assistantPanel').getBoundingClientRect().width,
+              hit: document.elementFromPoint(rect.left + rect.width / 2, y)?.id || ''
+            };
+          })()`);
+          await window.webContents.sendInputEvent({ type: 'mouseDown', x: nativeResizeBefore.x, y: nativeResizeBefore.y, button: 'left', clickCount: 1 });
+          await window.webContents.sendInputEvent({ type: 'mouseMove', x: nativeResizeBefore.x - 48, y: nativeResizeBefore.y, movementX: -48, movementY: 0 });
+          await window.webContents.sendInputEvent({ type: 'mouseUp', x: nativeResizeBefore.x - 48, y: nativeResizeBefore.y, button: 'left', clickCount: 1 });
+          await new Promise((resolve) => setTimeout(resolve, 180));
+          const nativeResizeAfter = await window.webContents.executeJavaScript(`(() => ({
+            width: document.getElementById('assistantPanel').getBoundingClientRect().width,
+            stored: Number(localStorage.getItem('edex.assistant.width.v1')),
+            resizing: document.body.classList.contains('assistant-resizing')
+          }))()`);
+          const systemLayoutBefore = await window.webContents.executeJavaScript(`(() => ({
+            systemVisible: getComputedStyle(document.querySelector('.system-group')).display !== 'none',
+            telemetry: document.getElementById('telemetryPanel').getBoundingClientRect().width,
+            terminal: document.querySelector('.terminal-panel').getBoundingClientRect().width,
+            assistant: document.getElementById('assistantPanel').getBoundingClientRect().width,
+            columns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns
+          }))()`);
+          await window.webContents.executeJavaScript("document.getElementById('systemGroupToggle').click()");
+          await new Promise((resolve) => setTimeout(resolve, 180));
+          const systemLayoutAfter = await window.webContents.executeJavaScript(`(() => ({
+            systemVisible: getComputedStyle(document.querySelector('.system-group')).display !== 'none',
+            telemetry: document.getElementById('telemetryPanel').getBoundingClientRect().width,
+            terminal: document.querySelector('.terminal-panel').getBoundingClientRect().width,
+            assistant: document.getElementById('assistantPanel').getBoundingClientRect().width,
+            columns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns
+          }))()`);
+
           const minimumAssistantTestTerminalWidth = assistantGeometry.viewport.width <= 1180 ? 300 : 400;
           if (assistantGeometry.panel.width < 300 || assistantGeometry.terminalWidth < minimumAssistantTestTerminalWidth
             || assistantGeometry.panel.left < 0 || assistantGeometry.panel.right > assistantGeometry.viewport.width
@@ -1958,6 +1995,36 @@ function createWindow() {
             || restoredWidth.toggleCount !== 3 || restoredWidth.panelOpen !== 'true') {
             throw new Error('Assistant width did not persist across renderer reload');
           }
+          if (nativeResizeBefore.hit !== 'assistantResizer'
+            || nativeResizeAfter.width <= nativeResizeBefore.width + 10
+            || nativeResizeAfter.stored !== Math.round(nativeResizeAfter.width)
+            || nativeResizeAfter.resizing) {
+            throw new Error(`Native mouse hit-test or resize failed: ${JSON.stringify({ nativeResizeBefore, nativeResizeAfter })}`);
+          }
+          if (Math.abs(systemLayoutAfter.terminal - systemLayoutBefore.terminal) > 2
+            || Math.abs(systemLayoutAfter.assistant - systemLayoutBefore.assistant) > 2
+            || systemLayoutAfter.systemVisible) {
+            throw new Error(`SYS toggle changed terminal/assistant split: ${JSON.stringify({ systemLayoutBefore, systemLayoutAfter })}`);
+          }
+          await window.webContents.executeJavaScript("document.getElementById('filesGroupToggle').click()");
+          await new Promise((resolve) => setTimeout(resolve, 180));
+          const telemetryHiddenLayout = await window.webContents.executeJavaScript(`(() => {
+            const workspace = document.querySelector('.workspace');
+            const columns = getComputedStyle(workspace).gridTemplateColumns.trim().split(/\\s+/);
+            return {
+              telemetryVisible: getComputedStyle(document.getElementById('telemetryPanel')).display !== 'none',
+              terminal: document.querySelector('.terminal-panel').getBoundingClientRect().width,
+              assistant: document.getElementById('assistantPanel').getBoundingClientRect().width,
+              columns
+            };
+          })()`);
+          if (telemetryHiddenLayout.telemetryVisible || telemetryHiddenLayout.columns.length !== 2
+            || telemetryHiddenLayout.terminal < minimumAssistantTestTerminalWidth
+            || telemetryHiddenLayout.assistant < 300) {
+            throw new Error(`Hidden telemetry broke terminal/assistant split: ${JSON.stringify(telemetryHiddenLayout)}`);
+          }
+          await window.webContents.executeJavaScript("document.getElementById('filesGroupToggle').click()");
+          await window.webContents.executeJavaScript("document.getElementById('systemGroupToggle').click()");
           if (cancellationStatus.state !== 'error' || cancellationStatus.text !== 'ABORTED') {
             throw new Error(`Assistant cancellation returned ${cancellationStatus.text || 'no status'}`);
           }

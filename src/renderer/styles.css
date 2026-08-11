@@ -2115,6 +2115,10 @@ body.file-browser-dragging * {
   grid-template-columns: clamp(300px, 22vw, 340px) minmax(430px, 1fr) var(--assistant-panel-width, clamp(330px, 25vw, 390px));
 }
 
+body.telemetry-panel-hidden .workspace:has(.assistant-panel:not([hidden])) {
+  grid-template-columns: minmax(430px, 1fr) var(--assistant-panel-width, 50%);
+}
+
 .workspace {
   position: relative;
 }
@@ -2460,6 +2464,10 @@ body.assistant-resizing {
   }
 
   .workspace:has(.assistant-panel:not([hidden])) {
+    grid-template-columns: minmax(300px, 1fr) var(--assistant-panel-width, 50%);
+  }
+
+  body.telemetry-panel-hidden .workspace:has(.assistant-panel:not([hidden])) {
     grid-template-columns: minmax(300px, 1fr) var(--assistant-panel-width, 50%);
   }
 }

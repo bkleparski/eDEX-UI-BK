@@ -143,6 +143,9 @@
 
     elements.assistantResizer.addEventListener('pointerup', (event) => finishAssistantResize(event.pointerId));
     elements.assistantResizer.addEventListener('pointercancel', (event) => finishAssistantResize(event.pointerId));
+    document.addEventListener('pointerup', (event) => finishAssistantResize(event.pointerId), true);
+    document.addEventListener('pointercancel', (event) => finishAssistantResize(event.pointerId), true);
+    elements.assistantResizer.addEventListener('lostpointercapture', () => finishAssistantResize());
 
     elements.assistantResizer.addEventListener('keydown', (event) => {
       const bounds = assistantWidthBounds();
