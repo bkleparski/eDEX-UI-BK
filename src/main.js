@@ -1196,6 +1196,24 @@ function createWindow() {
                 viewportHeight: window.innerHeight
               };
             })(),
+            fileHeadingGeometry: (() => {
+              const header = document.querySelector('.file-section-heading').getBoundingClientRect();
+              const title = document.getElementById('filesSectionTitle').getBoundingClientRect();
+              const mode = document.getElementById('fileBrowserMode').getBoundingClientRect();
+              const dots = document.getElementById('dotfilesToggle').getBoundingClientRect();
+              const session = document.getElementById('fileBrowserSession').getBoundingClientRect();
+              const count = document.getElementById('fileBrowserCount').getBoundingClientRect();
+              return {
+                header: { left: header.left, top: header.top, right: header.right, bottom: header.bottom },
+                title: { left: title.left, top: title.top, right: title.right, bottom: title.bottom, height: title.height },
+                items: [mode, dots, session, count].map((rect) => ({
+                  left: rect.left,
+                  top: rect.top,
+                  right: rect.right,
+                  bottom: rect.bottom
+                }))
+              };
+            })(),
             shortcutCount: document.querySelectorAll('.shortcut-legend kbd').length,
             monitoringReady: document.body.dataset.monitoringReady === 'true',
             monitoringSamples: Number(document.body.dataset.monitoringSamples || 0),
@@ -1299,6 +1317,14 @@ function createWindow() {
             || !diagnostics.dotfilesHiddenRestored || !diagnostics.dotfilesScreenshotReady
             || diagnostics.dotfilesChip !== 'DOTS HIDDEN') {
             throw new Error('Dotfile filtering, visible count or Cmd+Shift+. toggle failed');
+          }
+          const fileHeading = diagnostics.fileHeadingGeometry;
+          const fileHeadingItems = [fileHeading.title, ...fileHeading.items];
+          if (fileHeading.title.height > 12 || fileHeadingItems.some((item) => (
+            item.left < fileHeading.header.left || item.right > fileHeading.header.right
+              || item.top < fileHeading.header.top || item.bottom > fileHeading.header.bottom
+          ))) {
+            throw new Error('FILE SYSTEM heading wrapped or clipped its status metadata');
           }
           const preview = diagnostics.imagePreviewGeometry;
           if (diagnostics.imagePreviewVisible || !diagnostics.imagePreviewFinalObserved || !diagnostics.imagePreviewFirstObserved

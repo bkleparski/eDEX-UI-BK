@@ -1466,9 +1466,11 @@ body.files-group-hidden .files-section {
 }
 
 .section-heading h2 {
+  flex: 0 0 auto;
   margin: 0;
   font-size: 10px;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .section-heading > .hud-label,
@@ -1484,6 +1486,29 @@ body.files-group-hidden .files-section {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.section-heading.file-section-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  padding-block: 5px 4px;
+}
+
+.file-heading-primary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.file-heading-meta {
+  max-width: 100%;
+  justify-self: end;
+  font-size: 7px;
+  letter-spacing: .06em;
 }
 
 .file-mode-chip {
@@ -1854,6 +1879,30 @@ body.file-browser-dragging * {
   .disk-heading {
     min-height: 23px;
     padding-block: 6px 4px;
+  }
+
+  .section-heading.file-section-heading {
+    display: flex;
+    gap: 4px;
+    padding-block: 6px 4px;
+  }
+
+  .file-heading-primary {
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+
+  .file-heading-meta {
+    gap: 2px;
+    font-size: 6px;
+    letter-spacing: .02em;
+  }
+
+  .file-section-heading .file-mode-chip,
+  .file-section-heading .dotfiles-chip {
+    padding: 1px 2px;
+    font-size: 6px !important;
+    letter-spacing: .02em !important;
   }
 
   .cpu-block {

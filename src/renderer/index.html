@@ -147,11 +147,13 @@
             </div>
 
             <section class="data-section files-section" aria-labelledby="filesSectionTitle">
-              <header class="section-heading">
-                <h2 class="hud-title" id="filesSectionTitle">FILE SYSTEM</h2>
-                <div class="file-heading-meta hud-label">
-                  <button class="status-chip file-mode-chip" id="fileBrowserMode" type="button"
+              <header class="section-heading file-section-heading">
+                <div class="file-heading-primary">
+                  <h2 class="hud-title" id="filesSectionTitle">FILE SYSTEM</h2>
+                  <button class="status-chip file-mode-chip hud-label" id="fileBrowserMode" type="button"
                     aria-label="Tryb sledzenia katalogu terminala" aria-pressed="false" title="LIVE CWD TRACKING">LIVE</button>
+                </div>
+                <div class="file-heading-meta hud-label">
                   <button class="status-chip dotfiles-chip" id="dotfilesToggle" type="button"
                     aria-label="Pokaz ukryte pliki" aria-pressed="false" title="SHOW DOTFILES (⌘⇧.)">DOTS HIDDEN</button>
                   <span id="fileBrowserSession">TTY --</span>
