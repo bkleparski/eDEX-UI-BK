@@ -31,7 +31,8 @@
       <main class="workspace">
         <aside class="telemetry-panel panel hud-frame boot-frame" id="telemetryPanel" aria-label="Telemetria systemu i pliki">
           <div class="telemetry-column boot-content boot-content--left">
-            <section class="data-section time-section" aria-labelledby="timeSectionTitle">
+            <div class="system-group" id="systemGroup" aria-label="Czas i telemetria systemu">
+              <section class="data-section time-section" aria-labelledby="timeSectionTitle">
               <span class="hud-label section-kicker" id="timeSectionTitle">LOCAL TIME</span>
               <time class="column-clock" id="hudClock" datetime="">
                 <span id="clockHours">--:--</span><span id="clockSeconds">:--</span>
@@ -43,9 +44,9 @@
                 <span class="time-meta-divider power-divider" id="powerDivider" aria-hidden="true" hidden></span>
                 <span class="power-status" id="powerStatus" hidden><span id="powerLabel">PWR</span> <strong id="batteryValue">--</strong></span>
               </div>
-            </section>
+              </section>
 
-            <section class="data-section system-section" aria-labelledby="systemPanelTitle">
+              <section class="data-section system-section" aria-labelledby="systemPanelTitle">
               <header class="section-heading">
                 <h2 class="hud-title" id="systemPanelTitle">SYSTEM</h2>
                 <span class="hud-label" id="monitoringStatusText">SYNCING</span>
@@ -75,9 +76,9 @@
                 </div>
                 <div class="telemetry-error hud-label" id="systemError" hidden>SYSTEM DATA N/A</div>
               </div>
-            </section>
+              </section>
 
-            <section class="data-section disk-section" id="diskSection" aria-labelledby="diskSectionTitle">
+              <section class="data-section disk-section" id="diskSection" aria-labelledby="diskSectionTitle">
               <header class="section-heading disk-heading">
                 <h2 class="hud-title" id="diskSectionTitle">DISK</h2>
                 <span class="metric-value" id="diskValue">--</span>
@@ -89,9 +90,9 @@
                   <span>FREE <strong id="diskAvailable">--</strong></span>
                 </div>
               </div>
-            </section>
+              </section>
 
-            <section class="data-section network-section" aria-labelledby="networkPanelTitle">
+              <section class="data-section network-section" aria-labelledby="networkPanelTitle">
               <header class="section-heading">
                 <h2 class="hud-title" id="networkPanelTitle">NETWORK</h2>
                 <span class="hud-label" id="networkInterface">INTERFACE --</span>
@@ -142,7 +143,8 @@
                 </div>
                 <div class="telemetry-error hud-label" id="networkError" hidden>NETWORK DATA N/A</div>
               </div>
-            </section>
+              </section>
+            </div>
 
             <section class="data-section files-section" aria-labelledby="filesSectionTitle">
               <header class="section-heading">
@@ -179,13 +181,15 @@
         <div class="bottom-hud__content boot-content boot-content--bottom">
           <span class="hud-label input-route">INPUT ROUTE / LOCAL PTY</span>
           <div class="shortcut-legend hud-label" aria-label="Skróty klawiszowe">
-            <span><kbd>⌘1</kbd> DATA</span>
+            <span><kbd>⌘1</kbd> SYS</span>
+            <span><kbd>⌘2</kbd> FILES</span>
             <span><kbd>⇧⌘L</kbd> SCAN</span>
             <span><kbd>⇧⌘S</kbd> AUDIO</span>
             <span><kbd>⌘T</kbd> TTY</span>
           </div>
           <div class="status-chips" aria-label="Stan interfejsu">
-            <button class="status-chip hud-label is-on" id="telemetryPanelToggle" type="button" aria-pressed="true">DATA <span id="telemetryPanelState">ON</span></button>
+            <button class="status-chip hud-label is-on" id="systemGroupToggle" type="button" aria-pressed="true">SYSTEM <span id="systemGroupState">ON</span></button>
+            <button class="status-chip hud-label is-on" id="filesGroupToggle" type="button" aria-pressed="true">FILES <span id="filesGroupState">ON</span></button>
             <button class="status-chip hud-label" id="scanlinesToggle" type="button" aria-pressed="false">SCANLINES <span id="scanlinesState">OFF</span></button>
             <button class="status-chip hud-label" id="soundToggle" type="button" aria-pressed="false">SOUND <span id="soundState">OFF</span></button>
           </div>

@@ -970,8 +970,8 @@ body.booting .boot-content--bottom {
     gap: 5px;
   }
 
-  .shortcut-legend > span:nth-child(1),
-  .shortcut-legend > span:nth-child(2) {
+  .shortcut-legend > span:nth-child(3),
+  .shortcut-legend > span:nth-child(4) {
     display: none;
   }
 }
@@ -1359,6 +1359,19 @@ body.telemetry-panel-hidden .workspace {
   overflow: hidden;
 }
 
+.system-group {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+body.system-group-hidden .system-group,
+body.files-group-hidden .files-section {
+  display: none;
+}
+
 .data-section {
   flex: 0 0 auto;
   min-width: 0;
@@ -1696,5 +1709,113 @@ body.telemetry-panel-hidden .workspace {
   .workspace,
   body.telemetry-panel-hidden .workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 700px) and (min-width: 821px) {
+  .telemetry-column {
+    padding-block: 7px;
+  }
+
+  .time-section {
+    flex-basis: 55px;
+    padding-block: 1px 5px;
+  }
+
+  .column-clock {
+    font-size: 30px;
+  }
+
+  .time-meta {
+    gap: 5px;
+    margin-top: 3px;
+    font-size: 8px;
+  }
+
+  .telemetry-column .system-section {
+    flex-basis: 139px;
+  }
+
+  .telemetry-column .disk-section {
+    flex-basis: 68px;
+  }
+
+  .telemetry-column .network-section {
+    flex-basis: 128px;
+  }
+
+  .section-heading,
+  .disk-heading {
+    min-height: 23px;
+    padding-block: 6px 4px;
+  }
+
+  .cpu-block {
+    height: 66px;
+  }
+
+  .memory-block {
+    height: 50px;
+  }
+
+  .sparkline {
+    height: 22px;
+    margin-top: 4px;
+  }
+
+  .core-grid {
+    height: 10px;
+    margin-top: 3px;
+  }
+
+  .network-status-grid {
+    gap-block: 2px;
+    padding-block: 2px;
+  }
+
+  .network-status-item {
+    gap: 1px;
+  }
+
+  .network-section .network-summary {
+    padding-block: 2px;
+  }
+
+  .network-section .sparkline--network {
+    height: 12px;
+    margin-top: 2px;
+  }
+
+  .process-block {
+    padding-top: 2px;
+  }
+
+  .process-heading {
+    padding-bottom: 2px;
+  }
+
+  .process-list {
+    margin-top: 1px;
+  }
+
+  .network-section .process-row {
+    padding-block: 1px;
+  }
+
+  .network-section .process-row:nth-child(n + 2) {
+    display: none;
+  }
+
+  body.files-group-hidden .system-group,
+  body.files-group-hidden .network-section {
+    flex: 1 1 0;
+  }
+
+  body.files-group-hidden .network-section .process-row:nth-child(-n + 3) {
+    display: grid;
+  }
+
+  body.files-group-hidden .network-section .process-row:nth-child(n + 4) {
+    display: none;
   }
 }

@@ -12,6 +12,9 @@ const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
 const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
 const isAutomatedTest = isSmokeTest || isVisualTest;
+const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
+const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
+const minimumVisualTerminalWidth = visualTestWidth < 1200 ? 500 : 850;
 const terminals = new Map();
 const terminalMetadataSessions = new Map();
 const monitoringSessions = new Map();
@@ -617,8 +620,8 @@ function registerFilesIpc() {
 
 function createWindow() {
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: isVisualTest ? visualTestWidth : 1440,
+    height: isVisualTest ? visualTestHeight : 900,
     minWidth: 960,
     minHeight: 640,
     center: true,
@@ -664,7 +667,9 @@ function createWindow() {
           }));
           press('KeyT');
           press('Digit1');
-          press('Digit1');
+          setTimeout(() => press('Digit2'), 250);
+          setTimeout(() => press('Digit1'), 500);
+          setTimeout(() => press('Digit2'), 750);
           if (document.body.classList.contains('scanlines-on')) press('KeyL', true);
           press('KeyL', true);
           press('KeyL', true);
@@ -724,8 +729,12 @@ function createWindow() {
             terminalExitCount: Number(document.body.dataset.terminalExitCount || 0),
             terminalRespawnCount: Number(document.body.dataset.terminalRespawnCount || 0),
             terminalOfflineMarker: document.querySelector('.terminal-instance:not([hidden])')?.textContent.includes('SHELL OFFLINE') || false,
-            telemetryPanelOn: !document.body.classList.contains('telemetry-panel-hidden'),
-            telemetryToggleCount: Number(document.body.dataset.telemetryToggleCount || 0),
+            systemGroupOn: !document.body.classList.contains('system-group-hidden'),
+            filesGroupOn: !document.body.classList.contains('files-group-hidden'),
+            systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
+            filesToggleCount: Number(document.body.dataset.filesToggleCount || 0),
+            dataVisibilityStates: document.body.dataset.dataVisibilityStates || '',
+            dataVisibilityGeometry: JSON.parse(document.body.dataset.dataVisibilityGeometry || '{}'),
             scanlinesToggleCount: Number(document.body.dataset.scanlinesToggleCount || 0),
             soundEnabled: document.body.dataset.soundEnabled === 'true',
             soundToggleCount: Number(document.body.dataset.soundToggleCount || 0),
@@ -778,9 +787,9 @@ function createWindow() {
             throw new Error('Monitoring did not provide at least two samples');
           }
           if (diagnostics.windowMode.fullscreen || !diagnostics.windowMode.fullscreenable
-            || !diagnostics.windowMode.resizable || diagnostics.windowMode.bounds.width !== 1440
-            || diagnostics.windowMode.bounds.height !== 900) {
-            throw new Error('Window did not start as a resizable 1440x900 macOS window');
+            || !diagnostics.windowMode.resizable || diagnostics.windowMode.bounds.width !== visualTestWidth
+            || diagnostics.windowMode.bounds.height !== visualTestHeight) {
+            throw new Error('Window did not start with the requested resizable macOS dimensions');
           }
           if (diagnostics.terminalSessionCount !== 1 || diagnostics.activeTerminal !== 'tty-03'
             || !diagnostics.activeTerminalLabel.includes('03') || !diagnostics.activeTerminalLabel.includes('tmp')
@@ -789,11 +798,24 @@ function createWindow() {
             || diagnostics.terminalOfflineMarker || diagnostics.shellStatus !== 'LINK ONLINE') {
             throw new Error('PTY exit lifecycle did not close tabs and respawn the final session');
           }
-          if (!diagnostics.telemetryPanelOn || diagnostics.shortcutCount !== 4
-            || diagnostics.telemetryToggleCount !== 2
+          if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 5
+            || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 2
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
             || diagnostics.soundToggleCount < 3 || diagnostics.soundEnabled) {
             throw new Error('HUD shortcut test did not restore the expected state');
+          }
+          const visibility = diagnostics.dataVisibilityGeometry;
+          const expectedVisibilityStates = ['both', 'files-only', 'none', 'system-only'];
+          if (expectedVisibilityStates.some((state) => !diagnostics.dataVisibilityStates.split(',').includes(state))
+            || !visibility.both?.panelVisible || !visibility.both?.systemVisible || !visibility.both?.filesVisible
+            || !visibility['files-only']?.panelVisible || visibility['files-only']?.systemVisible || !visibility['files-only']?.filesVisible
+            || !visibility['system-only']?.panelVisible || !visibility['system-only']?.systemVisible || visibility['system-only']?.filesVisible
+            || visibility.none?.panelVisible || visibility.none?.systemVisible || visibility.none?.filesVisible
+            || visibility.none?.terminalWidth < visibility.both?.terminalWidth + 250
+            || visibility.none?.terminalScreenWidth < visibility.both?.terminalScreenWidth + 250
+            || visibility['files-only']?.fileListHeight < 200
+            || visibility['system-only']?.visibleProcessCount < 3) {
+            throw new Error('Independent SYSTEM/FILES visibility combinations or terminal refit are invalid');
           }
           if (!diagnostics.fileBrowserReady || !diagnostics.fileBrowserCwd.includes('tmp') || diagnostics.fileCount < 1) {
             throw new Error('File browser did not follow the active PTY working directory');
@@ -821,13 +843,12 @@ function createWindow() {
             || diagnostics.telemetryGeometry.columnScrollHeight > diagnostics.telemetryGeometry.columnClientHeight + 2
             || diagnostics.telemetryGeometry.fileListClientHeight < 30
             || diagnostics.telemetryGeometry.diskDetailsClearance < 6
-            || diagnostics.terminalGeometry.width < 850 || diagnostics.terminalGeometry.height < 100) {
+            || diagnostics.terminalGeometry.width < minimumVisualTerminalWidth || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Two-column layout has invalid geometry or scroll ownership');
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            app.isPackaged ? 'edex-ui-bk-phase7-packaged.png'
-              : forceOfflineTest ? 'edex-ui-bk-phase7-offline.png' : 'edex-ui-bk-phase7.png'
+            `edex-ui-bk-phase9-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);

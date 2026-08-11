@@ -394,7 +394,7 @@ function renderFileBrowser(result) {
 }
 
 async function refreshFileBrowser() {
-  if (document.body.classList.contains('telemetry-panel-hidden') || fileRefreshInFlight) return;
+  if (document.body.classList.contains('files-group-hidden') || fileRefreshInFlight) return;
   const requestedSessionId = activeSessionId;
   if (!requestedSessionId) {
     renderFileBrowser(null);
@@ -487,20 +487,66 @@ function toggleScanlines() {
   focusTerminal();
 }
 
-function updateTelemetryVisibility(visible) {
-  document.body.dataset.telemetryToggleCount = String((Number(document.body.dataset.telemetryToggleCount) || 0) + 1);
-  document.body.classList.toggle('telemetry-panel-hidden', !visible);
-  const button = document.getElementById('telemetryPanelToggle');
-  const state = document.getElementById('telemetryPanelState');
-  button.classList.toggle('is-on', visible);
-  button.setAttribute('aria-pressed', String(visible));
-  state.textContent = visible ? 'ON' : 'OFF';
-  if (visible) refreshFileBrowser();
+function dataVisibilityState() {
+  const systemVisible = !document.body.classList.contains('system-group-hidden');
+  const filesVisible = !document.body.classList.contains('files-group-hidden');
+  if (systemVisible && filesVisible) return 'both';
+  if (systemVisible) return 'system-only';
+  if (filesVisible) return 'files-only';
+  return 'none';
+}
+
+function recordDataVisibilityState() {
+  const state = dataVisibilityState();
+  document.body.dataset.dataVisibilityState = state;
+  if (!isVisualTest) return;
+
+  const visited = new Set((document.body.dataset.dataVisibilityStates || '').split(',').filter(Boolean));
+  visited.add(state);
+  document.body.dataset.dataVisibilityStates = [...visited].join(',');
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const samples = JSON.parse(document.body.dataset.dataVisibilityGeometry || '{}');
+    samples[state] = {
+      panelVisible: getComputedStyle(document.getElementById('telemetryPanel')).display !== 'none',
+      systemVisible: getComputedStyle(document.getElementById('systemGroup')).display !== 'none',
+      filesVisible: getComputedStyle(document.querySelector('.files-section')).display !== 'none',
+      terminalWidth: document.querySelector('.terminal-panel').getBoundingClientRect().width,
+      terminalScreenWidth: document.querySelector('.terminal-instance:not([hidden]) .xterm-screen')?.getBoundingClientRect().width || 0,
+      fileListHeight: document.getElementById('fileList').clientHeight,
+      visibleProcessCount: [...document.querySelectorAll('#processList .process-row')]
+        .filter((row) => row.getClientRects().length > 0).length
+    };
+    document.body.dataset.dataVisibilityGeometry = JSON.stringify(samples);
+  }));
+}
+
+function syncDataPanelVisibility() {
+  const systemVisible = !document.body.classList.contains('system-group-hidden');
+  const filesVisible = !document.body.classList.contains('files-group-hidden');
+  document.body.classList.toggle('telemetry-panel-hidden', !systemVisible && !filesVisible);
+  recordDataVisibilityState();
+  if (filesVisible) refreshFileBrowser();
   focusTerminal();
 }
 
-function toggleTelemetryPanel() {
-  updateTelemetryVisibility(document.body.classList.contains('telemetry-panel-hidden'));
+function updateDataGroupVisibility(group, visible) {
+  const isSystem = group === 'system';
+  const hiddenClass = isSystem ? 'system-group-hidden' : 'files-group-hidden';
+  const button = document.getElementById(isSystem ? 'systemGroupToggle' : 'filesGroupToggle');
+  const state = document.getElementById(isSystem ? 'systemGroupState' : 'filesGroupState');
+  const counter = isSystem ? 'systemToggleCount' : 'filesToggleCount';
+  document.body.dataset[counter] = String((Number(document.body.dataset[counter]) || 0) + 1);
+  document.body.classList.toggle(hiddenClass, !visible);
+  button.classList.toggle('is-on', visible);
+  button.setAttribute('aria-pressed', String(visible));
+  state.textContent = visible ? 'ON' : 'OFF';
+  syncDataPanelVisibility();
+}
+
+function toggleDataGroup(group) {
+  const hiddenClass = group === 'system' ? 'system-group-hidden' : 'files-group-hidden';
+  updateDataGroupVisibility(group, document.body.classList.contains(hiddenClass));
 }
 
 function updateClock() {
@@ -521,7 +567,9 @@ function initializeControls() {
   updateSound(soundEnabled, false);
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
-  document.getElementById('telemetryPanelToggle').addEventListener('click', toggleTelemetryPanel);
+  document.getElementById('systemGroupToggle').addEventListener('click', () => toggleDataGroup('system'));
+  document.getElementById('filesGroupToggle').addEventListener('click', () => toggleDataGroup('files'));
+  syncDataPanelVisibility();
   updateClock();
   const clockTimer = setInterval(updateClock, 1_000);
   window.addEventListener('beforeunload', () => clearInterval(clockTimer), { once: true });
@@ -544,7 +592,11 @@ function initializeControls() {
     if (event.code === 'Digit1') {
       event.preventDefault();
       event.stopPropagation();
-      toggleTelemetryPanel();
+      toggleDataGroup('system');
+    } else if (event.code === 'Digit2') {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleDataGroup('files');
     } else if (event.code === 'KeyT') {
       event.preventDefault();
       event.stopPropagation();
