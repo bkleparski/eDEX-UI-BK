@@ -1,12 +1,21 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, nativeImage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, net, shell } = require('electron');
 const { execFile } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const pty = require('node-pty');
 const si = require('systeminformation');
+const { AssistantService } = require('./main/assistant/assistant-service');
+const { PROVIDER_IDS } = require('./main/assistant/contracts');
+const { LMStudioProvider } = require('./main/assistant/lmstudio-provider');
+const { OllamaProvider } = require('./main/assistant/ollama-provider');
+const { OpenCodeGoProvider } = require('./main/assistant/opencode-go-provider');
+const { OpenRouterProvider } = require('./main/assistant/openrouter-provider');
+const { ProviderRegistry } = require('./main/assistant/provider-registry');
+const { ConfigStore } = require('./main/config-store');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
@@ -24,6 +33,10 @@ const visualBrowserLargeImage = path.join(visualBrowserChild, 'too-large.png');
 const terminals = new Map();
 const terminalMetadataSessions = new Map();
 const monitoringSessions = new Map();
+const assistantRequests = new Map();
+let configStore;
+let providerRegistry;
+let assistantService;
 let smokeTimeout;
 let gracefulShutdownStarted = false;
 
@@ -778,6 +791,141 @@ function registerFilesIpc() {
   ipcMain.handle('files:preview', async (event, payload = {}) => {
     requireTrustedSender(event);
     return previewImageFile(payload.filePath);
+  });
+}
+
+function configureCloudProviders() {
+  const config = configStore.get();
+  providerRegistry.register(new OpenRouterProvider({ apiKey: config.secrets.openRouterApiKey }));
+  providerRegistry.register(new OpenCodeGoProvider({ apiKey: config.secrets.openCodeGoApiKey }));
+  return config;
+}
+
+function assistantRequestMap(webContents) {
+  let requests = assistantRequests.get(webContents.id);
+  if (!requests) {
+    requests = new Map();
+    assistantRequests.set(webContents.id, requests);
+    webContents.once('destroyed', () => disposeAssistantRequests(webContents.id));
+  }
+  return requests;
+}
+
+function disposeAssistantRequests(webContentsId) {
+  const requests = assistantRequests.get(webContentsId);
+  if (!requests) return;
+  for (const controller of requests.values()) controller.abort();
+  assistantRequests.delete(webContentsId);
+}
+
+function assistantErrorPayload(error) {
+  return {
+    type: 'error',
+    code: error?.code || 'ASSISTANT_ERROR',
+    message: typeof error?.message === 'string' ? error.message : 'Assistant request failed.',
+    provider: error?.provider || null,
+    status: error?.status || null,
+    retryAfter: error?.retryAfter || null
+  };
+}
+
+function requireConfiguredCloudProvider(provider, config) {
+  if (provider === PROVIDER_IDS.OPENROUTER && !config.secrets.openRouterApiKey) {
+    throw new Error('OpenRouter API key is not configured.');
+  }
+  if (provider === PROVIDER_IDS.OPENCODE_GO && !config.secrets.openCodeGoApiKey) {
+    throw new Error('OpenCode Go API key is not configured.');
+  }
+}
+
+function registerAssistantIpc() {
+  ipcMain.handle('settings:get', (event) => {
+    requireTrustedSender(event);
+    return configStore.getPublic();
+  });
+
+  ipcMain.handle('settings:update', (event, patch) => {
+    requireTrustedSender(event);
+    const updated = configStore.update(patch);
+    configureCloudProviders();
+    return updated;
+  });
+
+  ipcMain.handle('assistant:list-models', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const provider = payload.provider;
+    const config = configureCloudProviders();
+    requireConfiguredCloudProvider(provider, config);
+    return providerRegistry.listModels(provider);
+  });
+
+  ipcMain.handle('assistant:test-provider', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const providerId = payload.provider;
+    const config = configureCloudProviders();
+    requireConfiguredCloudProvider(providerId, config);
+    const provider = providerRegistry.get(providerId);
+    if (typeof provider.testConnection === 'function') return provider.testConnection();
+    const models = await provider.listModels();
+    return { ok: true, modelCount: models.length };
+  });
+
+  ipcMain.handle('assistant:start', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const config = configureCloudProviders();
+    const provider = config.selection.hudProvider;
+    const model = config.selection.models[provider];
+    requireConfiguredCloudProvider(provider, config);
+    if (!model) throw new Error(`No active model selected for ${provider}.`);
+    const requestId = typeof payload.requestId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(payload.requestId)
+      ? payload.requestId
+      : `hud-${randomUUID()}`;
+    const requests = assistantRequestMap(event.sender);
+    if (requests.has(requestId)) throw new Error('Assistant request ID is already active.');
+    const controller = new AbortController();
+    requests.set(requestId, controller);
+    const send = (assistantEvent) => {
+      if (!event.sender.isDestroyed()) event.sender.send('assistant:event', assistantEvent);
+    };
+    try {
+      return await assistantService.run({
+        requestId,
+        conversationId: payload.conversationId,
+        prompt: payload.prompt,
+        mode: payload.mode,
+        surface: 'hud',
+        provider,
+        model
+      }, { signal: controller.signal, onEvent: send });
+    } catch (error) {
+      send({ requestId, ...assistantErrorPayload(error) });
+      throw error;
+    } finally {
+      requests.delete(requestId);
+    }
+  });
+
+  ipcMain.on('assistant:cancel', (event, payload = {}) => {
+    if (!isTrustedSender(event) || typeof payload.requestId !== 'string') return;
+    assistantRequests.get(event.sender.id)?.get(payload.requestId)?.abort();
+  });
+
+  ipcMain.on('assistant:reset', (event, payload = {}) => {
+    if (!isTrustedSender(event) || typeof payload.conversationId !== 'string') return;
+    assistantService.resetConversation(payload.conversationId);
+  });
+
+  ipcMain.handle('assistant:open-source', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    let target;
+    try {
+      target = new URL(payload.url);
+    } catch {
+      throw new Error('Invalid source URL.');
+    }
+    if (!['http:', 'https:'].includes(target.protocol)) throw new Error('Unsupported source URL.');
+    await shell.openExternal(target.href);
+    return { opened: true };
   });
 }
 
@@ -1588,9 +1736,14 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  configStore = new ConfigStore(app.getPath('userData'));
+  providerRegistry = new ProviderRegistry([new OllamaProvider(), new LMStudioProvider()]);
+  configureCloudProviders();
+  assistantService = new AssistantService({ registry: providerRegistry, configStore });
   registerTerminalIpc();
   registerFilesIpc();
   registerMonitoringIpc();
+  registerAssistantIpc();
   createWindow();
 
   app.on('activate', () => {
@@ -1612,6 +1765,9 @@ app.on('before-quit', (event) => {
   }
   for (const webContentsId of monitoringSessions.keys()) {
     disposeMonitoring(webContentsId);
+  }
+  for (const webContentsId of assistantRequests.keys()) {
+    disposeAssistantRequests(webContentsId);
   }
   setTimeout(() => app.exit(process.exitCode || 0), 250);
 });

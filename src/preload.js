@@ -38,3 +38,18 @@ contextBridge.exposeInMainWorld('filesApi', Object.freeze({
   getPathForFile: (file) => webUtils.getPathForFile(file),
   pathForDropSupported: typeof webUtils?.getPathForFile === 'function'
 }));
+
+contextBridge.exposeInMainWorld('settingsApi', Object.freeze({
+  get: () => ipcRenderer.invoke('settings:get'),
+  update: (patch) => ipcRenderer.invoke('settings:update', patch)
+}));
+
+contextBridge.exposeInMainWorld('assistantApi', Object.freeze({
+  listModels: (provider) => ipcRenderer.invoke('assistant:list-models', { provider }),
+  testProvider: (provider) => ipcRenderer.invoke('assistant:test-provider', { provider }),
+  start: (request) => ipcRenderer.invoke('assistant:start', request),
+  cancel: (requestId) => ipcRenderer.send('assistant:cancel', { requestId }),
+  reset: (conversationId) => ipcRenderer.send('assistant:reset', { conversationId }),
+  openSource: (url) => ipcRenderer.invoke('assistant:open-source', { url }),
+  onEvent: (callback) => subscribe('assistant:event', callback)
+}));
