@@ -1482,7 +1482,31 @@ body.files-group-hidden .files-section {
 
 .file-heading-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.file-mode-chip {
+  border-color: transparent;
+  padding: 2px 4px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: default;
+  opacity: .58;
+}
+
+.status-chip.file-mode-chip:disabled {
+  pointer-events: none;
+}
+
+.status-chip.file-mode-chip[data-mode="browsing"] {
+  border-color: rgb(var(--cyan-bright-rgb) / .78);
+  color: var(--cyan-bright);
+  background: rgb(var(--cyan-rgb) / .1);
+  box-shadow: 0 0 7px rgb(var(--cyan-rgb) / .28), inset 0 0 5px rgb(var(--cyan-rgb) / .08);
+  cursor: pointer;
+  opacity: 1;
+  text-shadow: 0 0 5px rgb(var(--cyan-bright-rgb) / .55);
 }
 
 .section-body {
@@ -1622,8 +1646,29 @@ body.files-group-hidden .files-section {
 .file-row {
   grid-template-columns: 23px minmax(0, 1fr);
   gap: 5px;
-  padding: 3px 0;
+  padding: 3px 4px;
   font-size: 9px;
+  cursor: grab;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+.file-row:hover {
+  background: rgb(var(--cyan-rgb) / .08);
+  box-shadow: inset 2px 0 0 var(--cyan-bright);
+}
+
+.file-row--directory:hover .file-name {
+  color: var(--cyan-bright);
+  text-shadow: 0 0 4px rgb(var(--cyan-rgb) / .28);
+}
+
+.file-row.is-dragging {
+  opacity: .48;
+}
+
+body.file-browser-dragging,
+body.file-browser-dragging * {
+  cursor: grabbing !important;
 }
 
 .file-marker {

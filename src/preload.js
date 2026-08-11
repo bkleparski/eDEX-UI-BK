@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('monitoringApi', Object.freeze({
 }));
 
 contextBridge.exposeInMainWorld('filesApi', Object.freeze({
-  list: (sessionId) => ipcRenderer.invoke('files:list', { sessionId }),
+  list: (sessionId, directoryPath = null) => ipcRenderer.invoke('files:list', { sessionId, directoryPath }),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   pathForDropSupported: typeof webUtils?.getPathForFile === 'function'
 }));

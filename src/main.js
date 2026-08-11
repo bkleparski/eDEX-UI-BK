@@ -15,6 +15,9 @@ const isAutomatedTest = isSmokeTest || isVisualTest;
 const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
 const minimumVisualTerminalWidth = visualTestWidth < 1200 ? 500 : 850;
+const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase11-browser');
+const visualBrowserChild = path.join(visualBrowserRoot, 'child');
+const visualBrowserFile = path.join(visualBrowserRoot, "O'Brien phase 11.txt");
 const terminals = new Map();
 const terminalMetadataSessions = new Map();
 const monitoringSessions = new Map();
@@ -195,13 +198,19 @@ function ensureTerminalMetadataSession(webContents, activeSessionId) {
   return metadataSession;
 }
 
-async function listTerminalFiles(terminal, sessionId) {
+function validDirectoryPath(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 4_096
+    || value.includes('\0') || !path.isAbsolute(value)) return null;
+  return path.resolve(value);
+}
+
+async function listDirectoryFiles(cwd, sessionId) {
   try {
-    const cwd = await terminalWorkingDirectory(terminal);
     const directoryEntries = await fs.promises.readdir(cwd, { withFileTypes: true });
     const entries = directoryEntries
       .map((entry) => ({
         name: safeLabel(entry.name, 'UNKNOWN', 96),
+        fullPath: path.join(cwd, entry.name),
         type: entry.isDirectory() ? 'directory'
           : entry.isSymbolicLink() ? 'link'
             : entry.isFile() ? 'file' : 'other'
@@ -215,7 +224,8 @@ async function listTerminalFiles(terminal, sessionId) {
     return {
       status: 'ok',
       sessionId,
-      cwd: safeLabel(cwd, '/', 240),
+      cwd,
+      parentPath: cwd === path.parse(cwd).root ? null : path.dirname(cwd),
       entries: entries.slice(0, MAX_FILE_ENTRIES),
       totalCount: entries.length,
       truncated: entries.length > MAX_FILE_ENTRIES
@@ -225,6 +235,23 @@ async function listTerminalFiles(terminal, sessionId) {
       status: 'error',
       sessionId,
       cwd: null,
+      parentPath: null,
+      entries: [],
+      totalCount: 0,
+      truncated: false
+    };
+  }
+}
+
+async function listTerminalFiles(terminal, sessionId) {
+  try {
+    return listDirectoryFiles(await terminalWorkingDirectory(terminal), sessionId);
+  } catch {
+    return {
+      status: 'error',
+      sessionId,
+      cwd: null,
+      parentPath: null,
       entries: [],
       totalCount: 0,
       truncated: false
@@ -610,15 +637,28 @@ function registerFilesIpc() {
     requireTrustedSender(event);
     const sessionId = validSessionId(payload.sessionId);
     if (!sessionId) throw new Error('Invalid terminal session ID.');
+    if (payload.directoryPath !== null && payload.directoryPath !== undefined) {
+      const directoryPath = validDirectoryPath(payload.directoryPath);
+      if (!directoryPath) {
+        return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
+      }
+      return listDirectoryFiles(directoryPath, sessionId);
+    }
     const terminal = terminals.get(event.sender.id)?.get(sessionId);
     if (!terminal) {
-      return { status: 'error', sessionId, cwd: null, entries: [], totalCount: 0, truncated: false };
+      return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
     }
     return listTerminalFiles(terminal, sessionId);
   });
 }
 
 function createWindow() {
+  if (isVisualTest) {
+    fs.mkdirSync(visualBrowserChild, { recursive: true });
+    fs.writeFileSync(visualBrowserFile, 'phase 11 drag fixture\n');
+    fs.writeFileSync(path.join(visualBrowserChild, 'inside.txt'), 'phase 11 browsing fixture\n');
+  }
+
   const window = new BrowserWindow({
     width: isVisualTest ? visualTestWidth : 1440,
     height: isVisualTest ? visualTestHeight : 900,
@@ -681,6 +721,24 @@ function createWindow() {
             dispatch('dragover');
             if (shouldDrop) dispatch('drop');
           };
+          const dispatchPanelFileDrag = (row) => {
+            const target = document.querySelector('.terminal-surface');
+            const transfer = new DataTransfer();
+            row.dispatchEvent(new DragEvent('dragstart', {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer
+            }));
+            const dispatch = (type, dispatchTarget = target) => dispatchTarget.dispatchEvent(new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer
+            }));
+            dispatch('dragenter');
+            dispatch('dragover');
+            dispatch('drop');
+            dispatch('dragend', row);
+          };
           press('KeyT');
           press('Digit1');
           setTimeout(() => press('Digit2'), 250);
@@ -698,8 +756,14 @@ function createWindow() {
           };
           waitFor(
             () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-02'
-              && document.getElementById('shellStatusText').textContent === 'LINK ONLINE',
-            () => window.terminalApi.write('tty-02', '/usr/bin/top -l 2 -s 1 >/dev/null; exit\\r')
+              && document.getElementById('shellStatusText').textContent === 'LINK ONLINE'
+              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.type === 'directory'),
+            () => {
+              const directory = [...document.querySelectorAll('#fileList .file-row')]
+                .find((row) => row.dataset.type === 'directory');
+              directory.click();
+              setTimeout(() => window.terminalApi.write('tty-02', '/usr/bin/top -l 2 -s 1 >/dev/null; exit\\r'), 250);
+            }
           );
           waitFor(
             () => Number(document.body.dataset.terminalExitCount || 0) >= 1,
@@ -709,12 +773,59 @@ function createWindow() {
             () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-03'
               && document.getElementById('shellStatusText').textContent === 'LINK ONLINE',
             () => {
-              window.terminalApi.write('tty-03', 'cd /tmp\\r');
+              window.terminalApi.write('tty-03', ${JSON.stringify(`cd '${visualBrowserRoot.replace(/'/g, `'\\''`)}'\r`)});
               setTimeout(() => {
                 window.terminalApi.write('tty-03', "printf '__EDEX_DROP_OK__<%s><%s>\\\\n' ");
                 dispatchTestFileDrag(true);
                 setTimeout(() => window.terminalApi.write('tty-03', '\\r'), 100);
               }, 750);
+            }
+          );
+          waitFor(
+            () => document.body.dataset.fileBrowserMode === 'live'
+              && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)}
+              && [...document.querySelectorAll('#fileList .file-row')].some((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)}),
+            () => {
+              const child = [...document.querySelectorAll('#fileList .file-row')]
+                .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
+              child.click();
+              waitFor(
+                () => document.body.dataset.fileBrowserMode === 'browsing'
+                  && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserChild)},
+                () => {
+                  document.body.dataset.fileBrowserDescended = 'true';
+                  document.querySelector('#fileList .file-row--parent')?.click();
+                  waitFor(
+                    () => document.body.dataset.fileBrowserMode === 'browsing'
+                      && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)},
+                    () => {
+                      document.body.dataset.fileBrowserAscended = 'true';
+                      const file = [...document.querySelectorAll('#fileList .file-row')]
+                        .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserFile)});
+                      window.terminalApi.write('tty-03', "printf '__EDEX_PANEL_DROP_OK__<%s>\\\\n' ");
+                      dispatchPanelFileDrag(file);
+                      setTimeout(() => window.terminalApi.write('tty-03', '\\r'), 100);
+                      waitFor(
+                        () => document.body.dataset.panelDropShellVerified === 'true',
+                        () => {
+                          document.getElementById('fileBrowserMode').click();
+                          waitFor(
+                            () => document.body.dataset.fileBrowserMode === 'live',
+                            () => {
+                              document.body.dataset.fileBrowserLiveResumed = 'true';
+                              setTimeout(() => {
+                                const liveChild = [...document.querySelectorAll('#fileList .file-row')]
+                                  .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
+                                liveChild?.click();
+                              }, 300);
+                            }
+                          );
+                        }
+                      );
+                    }
+                  );
+                }
+              );
             }
           );
           setTimeout(() => dispatchTestFileDrag(false), 10_500);
@@ -761,6 +872,10 @@ function createWindow() {
             dropSessionId: document.body.dataset.dropSessionId || null,
             dropQuotedPayload: document.body.dataset.dropQuotedPayload || '',
             dropShellVerified: document.body.dataset.dropShellVerified === 'true',
+            panelDropPathCount: Number(document.body.dataset.panelDropPathCount || 0),
+            panelDropSessionId: document.body.dataset.panelDropSessionId || null,
+            panelDropQuotedPayload: document.body.dataset.panelDropQuotedPayload || '',
+            panelDropShellVerified: document.body.dataset.panelDropShellVerified === 'true',
             systemGroupOn: !document.body.classList.contains('system-group-hidden'),
             filesGroupOn: !document.body.classList.contains('files-group-hidden'),
             systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
@@ -772,7 +887,15 @@ function createWindow() {
             soundToggleCount: Number(document.body.dataset.soundToggleCount || 0),
             fileBrowserReady: document.body.dataset.fileBrowserReady === 'true',
             fileBrowserCwd: document.getElementById('fileBrowserCwd').textContent,
+            fileBrowserCwdPath: document.getElementById('fileBrowserCwd').title,
             fileCount: document.querySelectorAll('#fileList .file-row').length,
+            fileBrowserMode: document.body.dataset.fileBrowserMode,
+            fileBrowserDescended: document.body.dataset.fileBrowserDescended === 'true',
+            fileBrowserAscended: document.body.dataset.fileBrowserAscended === 'true',
+            fileBrowserLiveResumed: document.body.dataset.fileBrowserLiveResumed === 'true',
+            fileBrowserTabResumeObserved: document.body.dataset.fileBrowserTabResumeObserved === 'true',
+            fileBrowserDragStarted: document.body.dataset.fileBrowserDragStarted === 'true',
+            fileBrowserParentFirst: document.querySelector('#fileList .file-row:first-child')?.classList.contains('file-row--parent') || false,
             shortcutCount: document.querySelectorAll('.shortcut-legend kbd').length,
             monitoringReady: document.body.dataset.monitoringReady === 'true',
             monitoringSamples: Number(document.body.dataset.monitoringSamples || 0),
@@ -837,6 +960,13 @@ function createWindow() {
             || diagnostics.dropQuotedPayload !== expectedDropPayload || !diagnostics.dropShellVerified) {
             throw new Error('File drag/drop path insertion, shell quoting or active-session routing failed');
           }
+          const expectedPanelDropPayload = `'${visualBrowserFile.replace(/'/g, `'\\''`)}' `;
+          if (!diagnostics.panelDropShellVerified || diagnostics.panelDropPathCount !== 1
+            || diagnostics.panelDropSessionId !== diagnostics.activeTerminal
+            || diagnostics.panelDropQuotedPayload !== expectedPanelDropPayload
+            || !diagnostics.fileBrowserDragStarted) {
+            throw new Error('FILE SYSTEM drag/drop did not use the shared shell-quoting and active-session route');
+          }
           if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 5
             || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 2
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
@@ -856,8 +986,12 @@ function createWindow() {
             || visibility['system-only']?.visibleProcessCount < 3) {
             throw new Error('Independent SYSTEM/FILES visibility combinations or terminal refit are invalid');
           }
-          if (!diagnostics.fileBrowserReady || !diagnostics.fileBrowserCwd.includes('tmp') || diagnostics.fileCount < 1) {
-            throw new Error('File browser did not follow the active PTY working directory');
+          if (!diagnostics.fileBrowserReady || diagnostics.fileBrowserMode !== 'browsing'
+            || diagnostics.fileBrowserCwdPath !== visualBrowserChild
+            || diagnostics.fileCount < 1 || !diagnostics.fileBrowserParentFirst
+            || !diagnostics.fileBrowserDescended || !diagnostics.fileBrowserAscended
+            || !diagnostics.fileBrowserLiveResumed || !diagnostics.fileBrowserTabResumeObserved) {
+            throw new Error('FILE SYSTEM LIVE/BROWSING navigation or parent-row behavior failed');
           }
           if (!diagnostics.cspLocked || diagnostics.diskValue === '--' || diagnostics.diskUsed === '--'
             || diagnostics.diskAvailable === '--') {
@@ -887,7 +1021,7 @@ function createWindow() {
           }
           const screenshotPath = path.join(
             os.tmpdir(),
-            `edex-ui-bk-phase10-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
+            `edex-ui-bk-phase11-${visualTestWidth}x${visualTestHeight}${app.isPackaged ? '-packaged' : forceOfflineTest ? '-offline' : ''}.png`
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);

@@ -35,7 +35,9 @@ const isSmokeTest = testMode === 'smoke';
 const isVisualTest = testMode === 'visual';
 const smokeMarker = '__EDEX_PTY_ARM64_OK__';
 const dropTestMarker = "__EDEX_DROP_OK__</tmp/eDEX drag one.txt></tmp/O'Brien [v2].log>";
+const panelDropTestMarker = "__EDEX_PANEL_DROP_OK__</private/tmp/edex-ui-bk-phase11-browser/O'Brien phase 11.txt>";
 const dropTestMime = 'application/x-edex-ui-bk-test-paths';
+const internalFilePathMime = 'application/x-edex-ui-bk-file-path';
 const maxTerminalSessions = 8;
 const terminalSessions = new Map();
 let activeSessionId = null;
@@ -48,6 +50,9 @@ let audioContext = null;
 let soundEnabled = false;
 let fileRefreshTimer = null;
 let fileRefreshInFlight = false;
+let fileBrowserMode = 'live';
+let browsedDirectory = null;
+let fileBrowserRequestId = 0;
 let fileDragDepth = 0;
 let dropTestOutput = '';
 let rendererShuttingDown = false;
@@ -356,6 +361,38 @@ function fileTypeMarker(type) {
   return '[?]';
 }
 
+function updateFileBrowserMode(mode) {
+  fileBrowserMode = mode === 'browsing' ? 'browsing' : 'live';
+  const browsing = fileBrowserMode === 'browsing';
+  const chip = document.getElementById('fileBrowserMode');
+  chip.textContent = browsing ? 'BROWSING' : 'LIVE';
+  chip.classList.toggle('is-on', browsing);
+  chip.dataset.mode = fileBrowserMode;
+  chip.disabled = !browsing;
+  chip.setAttribute('aria-pressed', String(browsing));
+  chip.title = browsing ? 'RESUME LIVE TRACKING' : 'LIVE CWD TRACKING';
+  document.body.dataset.fileBrowserMode = fileBrowserMode;
+}
+
+function stopFileBrowserPolling() {
+  if (fileRefreshTimer !== null) clearInterval(fileRefreshTimer);
+  fileRefreshTimer = null;
+}
+
+function startFileBrowserPolling() {
+  stopFileBrowserPolling();
+  fileRefreshTimer = setInterval(refreshFileBrowser, 1_500);
+}
+
+function resumeLiveFileBrowser({ refresh = true } = {}) {
+  browsedDirectory = null;
+  fileBrowserRequestId += 1;
+  fileRefreshInFlight = false;
+  updateFileBrowserMode('live');
+  startFileBrowserPolling();
+  if (refresh) refreshFileBrowser();
+}
+
 function renderFileBrowser(result) {
   const list = document.getElementById('fileList');
   list.replaceChildren();
@@ -374,7 +411,12 @@ function renderFileBrowser(result) {
   cwdNode.title = ready && result.cwd ? result.cwd : '';
 
   if (!ready) return;
-  if (!Array.isArray(result.entries) || result.entries.length === 0) {
+  const entries = Array.isArray(result.entries) ? [...result.entries] : [];
+  if (result.parentPath) {
+    entries.unshift({ name: '..', fullPath: result.parentPath, type: 'directory', parent: true });
+  }
+
+  if (entries.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'file-empty hud-label';
     empty.textContent = 'DIRECTORY EMPTY';
@@ -382,43 +424,99 @@ function renderFileBrowser(result) {
     return;
   }
 
-  result.entries.forEach((entry) => {
+  entries.forEach((entry) => {
     const row = document.createElement('li');
     row.className = `file-row file-row--${entry.type}`;
+    if (entry.parent) row.classList.add('file-row--parent');
+    row.draggable = true;
+    row.dataset.path = entry.fullPath;
+    row.dataset.type = entry.type;
+    row.title = entry.fullPath;
     const marker = document.createElement('span');
     marker.className = 'file-marker';
     marker.textContent = fileTypeMarker(entry.type);
     const name = document.createElement('span');
     name.className = 'file-name';
-    name.textContent = `${entry.name}${entry.type === 'directory' ? '/' : ''}`;
-    name.title = entry.name;
+    name.textContent = entry.parent ? '..' : `${entry.name}${entry.type === 'directory' ? '/' : ''}`;
     row.append(marker, name);
     list.append(row);
   });
 }
 
-async function refreshFileBrowser() {
+async function refreshFileBrowser(directoryPath = null) {
   if (document.body.classList.contains('files-group-hidden') || fileRefreshInFlight) return;
   const requestedSessionId = activeSessionId;
+  const requestedMode = fileBrowserMode;
+  const requestedDirectory = requestedMode === 'browsing' ? (directoryPath || browsedDirectory) : null;
   if (!requestedSessionId) {
     renderFileBrowser(null);
     return;
   }
 
+  const requestId = ++fileBrowserRequestId;
   fileRefreshInFlight = true;
   try {
-    const result = await window.filesApi.list(requestedSessionId);
-    if (requestedSessionId === activeSessionId) renderFileBrowser(result);
+    const result = await window.filesApi.list(requestedSessionId, requestedDirectory);
+    if (requestId !== fileBrowserRequestId || requestedSessionId !== activeSessionId
+      || requestedMode !== fileBrowserMode) return;
+    if (requestedMode === 'browsing' && result?.status === 'ok') browsedDirectory = result.cwd;
+    renderFileBrowser(result);
   } catch {
-    if (requestedSessionId === activeSessionId) renderFileBrowser(null);
+    if (requestId === fileBrowserRequestId && requestedSessionId === activeSessionId) renderFileBrowser(null);
   } finally {
-    fileRefreshInFlight = false;
+    if (requestId === fileBrowserRequestId) fileRefreshInFlight = false;
   }
 }
 
+function browseDirectory(directoryPath) {
+  if (typeof directoryPath !== 'string' || directoryPath.length === 0) return;
+  browsedDirectory = directoryPath;
+  fileBrowserRequestId += 1;
+  fileRefreshInFlight = false;
+  stopFileBrowserPolling();
+  updateFileBrowserMode('browsing');
+  refreshFileBrowser(directoryPath);
+}
+
 function initializeFileBrowser() {
-  fileRefreshTimer = setInterval(refreshFileBrowser, 1_500);
-  window.addEventListener('beforeunload', () => clearInterval(fileRefreshTimer), { once: true });
+  const list = document.getElementById('fileList');
+  const modeChip = document.getElementById('fileBrowserMode');
+
+  list.addEventListener('click', (event) => {
+    const row = event.target.closest('.file-row');
+    if (!row || row.dataset.type !== 'directory') return;
+    browseDirectory(row.dataset.path);
+  });
+
+  list.addEventListener('dblclick', (event) => {
+    const row = event.target.closest('.file-row');
+    if (!row || row.dataset.type === 'directory') return;
+    insertDroppedPaths([row.dataset.path], 'browser');
+  });
+
+  list.addEventListener('dragstart', (event) => {
+    const row = event.target.closest('.file-row');
+    if (!row || !event.dataTransfer) return;
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', row.dataset.path);
+    event.dataTransfer.setData(internalFilePathMime, row.dataset.path);
+    row.classList.add('is-dragging');
+    document.body.classList.add('file-browser-dragging');
+    document.body.dataset.fileBrowserDragStarted = 'true';
+  });
+
+  list.addEventListener('dragend', (event) => {
+    event.target.closest('.file-row')?.classList.remove('is-dragging');
+    document.body.classList.remove('file-browser-dragging');
+  });
+
+  modeChip.addEventListener('click', () => {
+    if (fileBrowserMode === 'browsing') resumeLiveFileBrowser();
+  });
+
+  updateFileBrowserMode('live');
+  startFileBrowserPolling();
+  window.addEventListener('beforeunload', stopFileBrowserPolling, { once: true });
 }
 
 function focusTerminal() {
@@ -433,7 +531,9 @@ function focusTerminal() {
 
 function hasFileDrag(dataTransfer) {
   const types = Array.from(dataTransfer?.types || []);
-  return types.includes('Files') || (isVisualTest && types.includes(dropTestMime));
+  return types.includes('Files') || types.includes(internalFilePathMime)
+    || (document.body.classList.contains('file-browser-dragging') && types.includes('text/plain'))
+    || (isVisualTest && types.includes(dropTestMime));
 }
 
 function quoteShellPath(filePath) {
@@ -448,6 +548,13 @@ function droppedFilePaths(dataTransfer) {
     } catch {
       return [];
     }
+  }
+
+  const types = Array.from(dataTransfer?.types || []);
+  if (types.includes(internalFilePathMime)
+    || (document.body.classList.contains('file-browser-dragging') && types.includes('text/plain'))) {
+    const filePath = dataTransfer.getData(internalFilePathMime) || dataTransfer.getData('text/plain');
+    return typeof filePath === 'string' && filePath.length > 0 ? [filePath] : [];
   }
 
   return Array.from(dataTransfer?.files || []).flatMap((file) => {
@@ -469,16 +576,19 @@ function clearFileDropTarget() {
   fileDragDepth = 0;
   setFileDropTarget(false);
   document.body.dataset.dropIndicatorCleared = 'true';
+  document.body.classList.remove('file-browser-dragging');
+  document.querySelectorAll('.file-row.is-dragging').forEach((row) => row.classList.remove('is-dragging'));
 }
 
-function insertDroppedPaths(paths) {
+function insertDroppedPaths(paths, source = 'external') {
   const session = terminalSessions.get(activeSessionId);
   if (!session?.online || paths.length === 0) return false;
   const payload = `${paths.map(quoteShellPath).join(' ')} `;
   window.terminalApi.write(activeSessionId, payload);
-  document.body.dataset.dropPathCount = String(paths.length);
-  document.body.dataset.dropSessionId = activeSessionId;
-  document.body.dataset.dropQuotedPayload = payload;
+  const datasetPrefix = source === 'browser' ? 'panelDrop' : 'drop';
+  document.body.dataset[`${datasetPrefix}PathCount`] = String(paths.length);
+  document.body.dataset[`${datasetPrefix}SessionId`] = activeSessionId;
+  document.body.dataset[`${datasetPrefix}QuotedPayload`] = payload;
   session.terminal.focus();
   return true;
 }
@@ -510,9 +620,12 @@ function initializeFileDrop() {
     if (!hasFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
+    const transferTypes = Array.from(event.dataTransfer?.types || []);
+    const fromFileBrowser = transferTypes.includes(internalFilePathMime)
+      || (document.body.classList.contains('file-browser-dragging') && transferTypes.includes('text/plain'));
     const paths = droppedFilePaths(event.dataTransfer);
     clearFileDropTarget();
-    insertDroppedPaths(paths);
+    insertDroppedPaths(paths, fromFileBrowser ? 'browser' : 'external');
   });
 
   document.addEventListener('dragend', clearFileDropTarget);
@@ -716,7 +829,11 @@ function updateShellStatus() {
 function switchTerminalSession(sessionId) {
   const nextSession = terminalSessions.get(sessionId);
   if (!nextSession) return;
+  const sessionChanged = sessionId !== activeSessionId;
+  const resumedFromBrowsing = sessionChanged && fileBrowserMode === 'browsing';
   activeSessionId = sessionId;
+  if (sessionChanged) resumeLiveFileBrowser({ refresh: false });
+  if (resumedFromBrowsing) document.body.dataset.fileBrowserTabResumeObserved = 'true';
   for (const [id, session] of terminalSessions) {
     const active = id === sessionId;
     session.container.hidden = !active;
@@ -880,6 +997,7 @@ async function initializeTerminal() {
     if (isVisualTest) {
       dropTestOutput = `${dropTestOutput}${data}`.slice(-2_048);
       if (dropTestOutput.includes(dropTestMarker)) document.body.dataset.dropShellVerified = 'true';
+      if (dropTestOutput.includes(panelDropTestMarker)) document.body.dataset.panelDropShellVerified = 'true';
     }
 
     if (isSmokeTest && sessionId === 'tty-01' && !smokeCompleted) {
