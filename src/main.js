@@ -25,7 +25,7 @@ const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
 const isAutomatedTest = isSmokeTest || isVisualTest || isAssistantVisualTest;
 const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
-const minimumVisualTerminalWidth = visualTestWidth < 1200 ? 500 : 850;
+const minimumVisualTerminalWidthWithFilesPanel = visualTestWidth < 1200 ? 260 : 350;
 const minimumVisualFileListHeight = visualTestHeight < 700 ? 24 : 30;
 const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase13-browser');
 const visualBrowserChild = path.join(visualBrowserRoot, 'child');
@@ -48,6 +48,7 @@ const PROCESS_REFRESH_TICKS = 3;
 const DISK_REFRESH_TICKS = 10;
 const CONNECTIVITY_REFRESH_TICKS = 7;
 const BATTERY_REFRESH_TICKS = 30;
+const PROCESS_LIST_LIMIT = 14;
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const PUBLIC_IP_CACHE_MS = 5 * 60 * 1_000;
 const PUBLIC_IP_TIMEOUT_MS = 3_000;
@@ -335,6 +336,21 @@ async function previewImageFile(filePath) {
   }
 }
 
+async function enrichFileEntries(entries) {
+  return Promise.all(entries.map(async (entry) => {
+    try {
+      const stats = await fs.promises.lstat(entry.fullPath);
+      return {
+        ...entry,
+        sizeBytes: entry.type === 'file' ? Math.max(finiteNumber(stats.size, 0), 0) : null,
+        modifiedMs: finiteNumber(stats.mtimeMs, null)
+      };
+    } catch {
+      return { ...entry, sizeBytes: null, modifiedMs: null };
+    }
+  }));
+}
+
 async function listDirectoryFiles(cwd, sessionId, showHidden = false) {
   try {
     const directoryEntries = await fs.promises.readdir(cwd, { withFileTypes: true });
@@ -358,7 +374,7 @@ async function listDirectoryFiles(cwd, sessionId, showHidden = false) {
       sessionId,
       cwd,
       parentPath: cwd === path.parse(cwd).root ? null : path.dirname(cwd),
-      entries: entries.slice(0, MAX_FILE_ENTRIES),
+      entries: await enrichFileEntries(entries.slice(0, MAX_FILE_ENTRIES)),
       totalCount: entries.length,
       truncated: entries.length > MAX_FILE_ENTRIES
     };
@@ -539,7 +555,7 @@ async function collectProcessesMetric() {
     }))
     .filter((processInfo) => processInfo.name !== 'UNKNOWN')
     .sort((left, right) => right.cpuPercent - left.cpuPercent || right.memoryPercent - left.memoryPercent)
-    .slice(0, 6);
+    .slice(0, PROCESS_LIST_LIMIT);
 }
 
 function rejectedMessage(result) {
@@ -569,14 +585,29 @@ async function collectMonitoringSample(session) {
   } : null;
 
   const memory = memoryResult.status === 'fulfilled' ? (() => {
-    const totalBytes = Math.max(finiteNumber(memoryResult.value.total, 0), 0);
-    const availableBytes = Math.max(finiteNumber(memoryResult.value.available, 0), 0);
+    const raw = memoryResult.value;
+    const totalBytes = Math.max(finiteNumber(raw.total, 0), 0);
+    const availableBytes = Math.max(finiteNumber(raw.available, 0), 0);
     const usedBytes = Math.max(totalBytes - availableBytes, 0);
+    // macOS reports its page cache through buffcache; `cached` stays zero there.
+    const cachedBytes = Math.max(finiteNumber(raw.buffcache, 0) || finiteNumber(raw.cached, 0), 0);
+    const freeBytes = Math.max(finiteNumber(raw.free, 0), 0);
+    const swapTotalBytes = Math.max(finiteNumber(raw.swaptotal, 0), 0);
+    const swapUsedBytes = Math.max(finiteNumber(raw.swapused, 0), 0);
+    const share = (value) => (totalBytes > 0 ? clampPercent((value / totalBytes) * 100) : null);
     return {
       totalBytes,
       usedBytes,
       availableBytes,
-      usePercent: totalBytes > 0 ? clampPercent((usedBytes / totalBytes) * 100) : null
+      cachedBytes,
+      freeBytes,
+      swapTotalBytes,
+      swapUsedBytes,
+      usePercent: share(usedBytes),
+      cachedPercent: share(cachedBytes),
+      freePercent: share(freeBytes),
+      availablePercent: share(availableBytes),
+      swapPercent: swapTotalBytes > 0 ? clampPercent((swapUsedBytes / swapTotalBytes) * 100) : null
     };
   })() : null;
 
@@ -1097,9 +1128,10 @@ function createWindow() {
           };
           press('KeyT');
           press('Digit1');
-          setTimeout(() => press('Digit2'), 250);
-          setTimeout(() => press('Digit1'), 500);
-          setTimeout(() => press('Digit2'), 750);
+          setTimeout(() => press('Digit2'), 200);
+          setTimeout(() => press('Digit2'), 400);
+          setTimeout(() => press('Digit2'), 600);
+          setTimeout(() => press('Digit1'), 3_000);
           if (document.body.classList.contains('scanlines-on')) press('KeyL', true);
           press('KeyL', true);
           press('KeyL', true);
@@ -1490,7 +1522,7 @@ function createWindow() {
             panelDropQuotedPayload: document.body.dataset.panelDropQuotedPayload || '',
             panelDropShellVerified: document.body.dataset.panelDropShellVerified === 'true',
             systemGroupOn: !document.body.classList.contains('system-group-hidden'),
-            filesGroupOn: !document.body.classList.contains('files-group-hidden'),
+            filesGroupOn: !document.getElementById('filesPanel').hidden,
             systemToggleCount: Number(document.body.dataset.systemToggleCount || 0),
             filesToggleCount: Number(document.body.dataset.filesToggleCount || 0),
             dataVisibilityStates: document.body.dataset.dataVisibilityStates || '',
@@ -1588,7 +1620,6 @@ function createWindow() {
             telemetryGeometry: (() => {
               const panel = document.getElementById('telemetryPanel').getBoundingClientRect();
               const column = document.querySelector('.telemetry-column');
-              const list = document.getElementById('fileList');
               const diskDetails = document.querySelector('#diskSection .metric-pairs').getBoundingClientRect();
               const networkHeading = document.querySelector('.network-section .section-heading').getBoundingClientRect();
               return {
@@ -1596,9 +1627,18 @@ function createWindow() {
                 height: panel.height,
                 columnClientHeight: column.clientHeight,
                 columnScrollHeight: column.scrollHeight,
-                fileListClientHeight: list.clientHeight,
-                fileListScrollHeight: list.scrollHeight,
                 diskDetailsClearance: networkHeading.top - diskDetails.bottom
+              };
+            })(),
+            filesPanelGeometry: (() => {
+              const filesPanel = document.getElementById('filesPanel');
+              const panel = filesPanel.getBoundingClientRect();
+              const list = document.getElementById('fileList');
+              return {
+                hidden: filesPanel.hidden,
+                width: panel.width,
+                fileListClientHeight: list.clientHeight,
+                fileListScrollHeight: list.scrollHeight
               };
             })(),
             terminalGeometry: (() => {
@@ -1652,23 +1692,20 @@ function createWindow() {
             throw new Error('FILE SYSTEM drag/drop did not use the shared shell-quoting and active-session route');
           }
           if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 6
-            || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 2
+            || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 3
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
             || diagnostics.soundToggleCount < 3 || diagnostics.soundEnabled) {
             throw new Error('HUD shortcut test did not restore the expected state');
           }
           const visibility = diagnostics.dataVisibilityGeometry;
-          const expectedVisibilityStates = ['both', 'files-only', 'none', 'system-only'];
+          const expectedVisibilityStates = ['system-visible', 'system-hidden'];
           if (expectedVisibilityStates.some((state) => !diagnostics.dataVisibilityStates.split(',').includes(state))
-            || !visibility.both?.panelVisible || !visibility.both?.systemVisible || !visibility.both?.filesVisible
-            || !visibility['files-only']?.panelVisible || visibility['files-only']?.systemVisible || !visibility['files-only']?.filesVisible
-            || !visibility['system-only']?.panelVisible || !visibility['system-only']?.systemVisible || visibility['system-only']?.filesVisible
-            || visibility.none?.panelVisible || visibility.none?.systemVisible || visibility.none?.filesVisible
-            || visibility.none?.terminalWidth < visibility.both?.terminalWidth + 250
-            || visibility.none?.terminalScreenWidth < visibility.both?.terminalScreenWidth + 250
-            || visibility['files-only']?.fileListHeight < 200
-            || visibility['system-only']?.visibleProcessCount < 3) {
-            throw new Error('Independent SYSTEM/FILES visibility combinations or terminal refit are invalid');
+            || !visibility['system-visible']?.panelVisible || !visibility['system-visible']?.systemVisible
+            || visibility['system-hidden']?.panelVisible || visibility['system-hidden']?.systemVisible
+            || visibility['system-hidden']?.terminalWidth < visibility['system-visible']?.terminalWidth + 250
+            || visibility['system-hidden']?.terminalScreenWidth < visibility['system-visible']?.terminalScreenWidth + 250
+            || visibility['system-visible']?.visibleProcessCount < 3) {
+            throw new Error('SYSTEM panel visibility toggle or terminal refit is invalid');
           }
           if (!diagnostics.fileBrowserReady || diagnostics.fileBrowserMode !== 'browsing'
             || diagnostics.fileBrowserCwdPath !== visualBrowserRoot
@@ -1724,11 +1761,12 @@ function createWindow() {
             || (diagnostics.batteryPresent && !/^\d+%$/.test(diagnostics.batteryValue))) {
             throw new Error('Battery visibility does not match machine capabilities');
           }
-          if (diagnostics.telemetryGeometry.width < 320 || diagnostics.telemetryGeometry.width > 340
+          if (diagnostics.telemetryGeometry.width < 300 || diagnostics.telemetryGeometry.width > 340
             || diagnostics.telemetryGeometry.columnScrollHeight > diagnostics.telemetryGeometry.columnClientHeight + 2
-            || diagnostics.telemetryGeometry.fileListClientHeight < minimumVisualFileListHeight
             || diagnostics.telemetryGeometry.diskDetailsClearance < 6
-            || diagnostics.terminalGeometry.width < minimumVisualTerminalWidth || diagnostics.terminalGeometry.height < 100) {
+            || diagnostics.filesPanelGeometry.hidden
+            || diagnostics.filesPanelGeometry.fileListClientHeight < minimumVisualFileListHeight
+            || diagnostics.terminalGeometry.width < minimumVisualTerminalWidthWithFilesPanel || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Two-column layout has invalid geometry or scroll ownership');
           }
           const screenshotPath = path.join(
@@ -2001,10 +2039,10 @@ function createWindow() {
             || nativeResizeAfter.resizing) {
             throw new Error(`Native mouse hit-test or resize failed: ${JSON.stringify({ nativeResizeBefore, nativeResizeAfter })}`);
           }
-          if (Math.abs(systemLayoutAfter.terminal - systemLayoutBefore.terminal) > 2
-            || Math.abs(systemLayoutAfter.assistant - systemLayoutBefore.assistant) > 2
-            || systemLayoutAfter.systemVisible) {
-            throw new Error(`SYS toggle changed terminal/assistant split: ${JSON.stringify({ systemLayoutBefore, systemLayoutAfter })}`);
+          if (Math.abs(systemLayoutAfter.assistant - systemLayoutBefore.assistant) > 2
+            || systemLayoutAfter.systemVisible || systemLayoutAfter.telemetry !== 0
+            || systemLayoutAfter.terminal <= systemLayoutBefore.terminal + 250) {
+            throw new Error(`SYS toggle did not collapse the telemetry column: ${JSON.stringify({ systemLayoutBefore, systemLayoutAfter })}`);
           }
           await window.webContents.executeJavaScript("document.getElementById('filesGroupToggle').click()");
           await new Promise((resolve) => setTimeout(resolve, 180));
@@ -2013,15 +2051,18 @@ function createWindow() {
             const columns = getComputedStyle(workspace).gridTemplateColumns.trim().split(/\\s+/);
             return {
               telemetryVisible: getComputedStyle(document.getElementById('telemetryPanel')).display !== 'none',
+              assistantHidden: document.getElementById('assistantPanel').hidden,
+              filesHidden: document.getElementById('filesPanel').hidden,
               terminal: document.querySelector('.terminal-panel').getBoundingClientRect().width,
-              assistant: document.getElementById('assistantPanel').getBoundingClientRect().width,
+              files: document.getElementById('filesPanel').getBoundingClientRect().width,
               columns
             };
           })()`);
           if (telemetryHiddenLayout.telemetryVisible || telemetryHiddenLayout.columns.length !== 2
+            || !telemetryHiddenLayout.assistantHidden || telemetryHiddenLayout.filesHidden
             || telemetryHiddenLayout.terminal < minimumAssistantTestTerminalWidth
-            || telemetryHiddenLayout.assistant < 300) {
-            throw new Error(`Hidden telemetry broke terminal/assistant split: ${JSON.stringify(telemetryHiddenLayout)}`);
+            || telemetryHiddenLayout.files < 300) {
+            throw new Error(`FILES toggle did not close AI and take over the split: ${JSON.stringify(telemetryHiddenLayout)}`);
           }
           await window.webContents.executeJavaScript("document.getElementById('filesGroupToggle').click()");
           await window.webContents.executeJavaScript("document.getElementById('systemGroupToggle').click()");
@@ -2047,7 +2088,28 @@ function createWindow() {
   }
 }
 
+// The npm package was renamed from `edex-ui-bk` to `ebartnet-ui`, which moves the
+// Electron userData directory. Carry the existing configuration over once so the
+// stored provider credentials survive the rename.
+function migrateLegacyUserData() {
+  if (isAutomatedTest) return;
+  const currentPath = app.getPath('userData');
+  const legacyPath = path.join(path.dirname(currentPath), 'edex-ui-bk');
+  if (legacyPath === currentPath) return;
+  const currentConfig = path.join(currentPath, 'config.json');
+  const legacyConfig = path.join(legacyPath, 'config.json');
+  try {
+    if (fs.existsSync(currentConfig) || !fs.existsSync(legacyConfig)) return;
+    fs.mkdirSync(currentPath, { recursive: true });
+    fs.copyFileSync(legacyConfig, currentConfig);
+    fs.chmodSync(currentConfig, 0o600);
+  } catch (error) {
+    console.error(`Could not migrate legacy configuration: ${error.message}`);
+  }
+}
+
 app.whenReady().then(async () => {
+  migrateLegacyUserData();
   configStore = new ConfigStore(app.getPath('userData'));
   providerRegistry = new ProviderRegistry([new OllamaProvider(), new LMStudioProvider()]);
   configureCloudProviders();

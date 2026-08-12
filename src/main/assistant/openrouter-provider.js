@@ -15,7 +15,7 @@ class OpenRouterProvider {
       timeoutMs,
       defaultHeaders: {
         'HTTP-Referer': 'https://github.com/BartekKleparski/eDEX-UI-BK',
-        'X-Title': 'eDEX-UI BK'
+        'X-Title': 'EBARTNET-UI'
       }
     });
   }

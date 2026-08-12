@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-    <title>eDEX-UI-BK</title>
+    <title>EBARTNET-UI</title>
     <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
     <link rel="stylesheet" href="theme-tokens.css">
     <link rel="stylesheet" href="styles.css">
@@ -14,7 +14,7 @@
       <header class="top-hud panel hud-frame boot-frame">
         <div class="top-hud__content boot-content boot-content--top">
           <div class="brand-lockup">
-            <span class="hud-title">eDEX-UI BK</span>
+            <span class="hud-title">EBARTNET-UI</span>
             <span class="hud-label">GRID TERMINAL</span>
           </div>
           <div class="session-telemetry hud-label">
@@ -70,12 +70,44 @@
                     <span class="hud-label" id="memoryMetricTitle">MEMORY</span>
                     <span class="metric-value" id="memoryValue">--</span>
                   </div>
-                  <div class="meter" aria-hidden="true"><span id="memoryMeter"></span></div>
-                  <div class="metric-pairs hud-label">
-                    <span>USED <strong id="memoryUsed">--</strong></span>
-                    <span>FREE <strong id="memoryAvailable">--</strong></span>
+                  <div class="meter meter--segmented" aria-hidden="true">
+                    <span id="memoryMeter"></span>
+                    <span class="meter-segment meter-segment--cached" id="memoryCachedMeter"></span>
                   </div>
+                  <dl class="memory-detail hud-label">
+                    <div class="memory-row">
+                      <dt>TOTAL</dt>
+                      <dd class="memory-amount" id="memoryTotal">--</dd>
+                      <dd class="memory-share"></dd>
+                    </div>
+                    <div class="memory-row memory-row--used">
+                      <dt>USED</dt>
+                      <dd class="memory-amount" id="memoryUsed">--</dd>
+                      <dd class="memory-share" id="memoryUsedShare">--</dd>
+                    </div>
+                    <div class="memory-row memory-row--cached">
+                      <dt>CACHED</dt>
+                      <dd class="memory-amount" id="memoryCached">--</dd>
+                      <dd class="memory-share" id="memoryCachedShare">--</dd>
+                    </div>
+                    <div class="memory-row memory-row--available">
+                      <dt>AVAIL</dt>
+                      <dd class="memory-amount" id="memoryAvailable">--</dd>
+                      <dd class="memory-share" id="memoryAvailableShare">--</dd>
+                    </div>
+                    <div class="memory-row memory-row--free">
+                      <dt>FREE</dt>
+                      <dd class="memory-amount" id="memoryFree">--</dd>
+                      <dd class="memory-share" id="memoryFreeShare">--</dd>
+                    </div>
+                    <div class="memory-row memory-row--swap" id="memorySwapRow" hidden>
+                      <dt>SWAP</dt>
+                      <dd class="memory-amount" id="memorySwap">--</dd>
+                      <dd class="memory-share" id="memorySwapShare">--</dd>
+                    </div>
+                  </dl>
                 </div>
+
                 <div class="telemetry-error hud-label" id="systemError" hidden>SYSTEM DATA N/A</div>
               </div>
               </section>
@@ -147,29 +179,6 @@
               </div>
               </section>
             </div>
-
-            <section class="data-section files-section" aria-labelledby="filesSectionTitle">
-              <header class="section-heading file-section-heading">
-                <div class="file-heading-primary">
-                  <h2 class="hud-title" id="filesSectionTitle">FILE SYSTEM</h2>
-                  <button class="status-chip file-mode-chip hud-label" id="fileBrowserMode" type="button"
-                    aria-label="Tryb sledzenia katalogu terminala" aria-pressed="false" title="LIVE CWD TRACKING">LIVE</button>
-                </div>
-                <div class="file-heading-meta hud-label">
-                  <button class="status-chip dotfiles-chip" id="dotfilesToggle" type="button"
-                    aria-label="Pokaz ukryte pliki" aria-pressed="false" title="SHOW DOTFILES (⌘⇧.)">DOTS HIDDEN</button>
-                  <span id="fileBrowserSession">TTY --</span>
-                  <span id="fileBrowserCount">-- ITEMS</span>
-                </div>
-              </header>
-              <div class="file-browser" id="filesView">
-                <div class="file-browser__cwd" id="fileBrowserCwd" title="">CWD / --</div>
-                <ol class="file-list" id="fileList" aria-live="polite">
-                  <li class="file-empty hud-label">AWAITING PTY</li>
-                </ol>
-                <div class="telemetry-error hud-label" id="fileBrowserError" hidden>DIRECTORY DATA N/A</div>
-              </div>
-            </section>
           </div>
         </aside>
 
@@ -184,7 +193,44 @@
           </div>
         </section>
 
-        <aside class="assistant-panel panel hud-frame" id="assistantPanel" aria-labelledby="assistantPanelTitle" hidden>
+        <aside class="files-panel panel hud-frame side-panel" id="filesPanel" aria-labelledby="filesSectionTitle" hidden>
+          <button class="files-resizer" id="filesResizer" type="button" role="separator"
+            aria-label="Resize file system panel" aria-orientation="vertical" aria-valuemin="300"
+            aria-valuemax="640" aria-valuenow="390" tabindex="0"></button>
+          <header class="section-heading file-section-heading">
+            <div class="file-heading-primary">
+              <h2 class="hud-title" id="filesSectionTitle">FILE SYSTEM</h2>
+              <button class="status-chip file-mode-chip hud-label" id="fileBrowserMode" type="button"
+                aria-label="Tryb sledzenia katalogu terminala" aria-pressed="false" title="LIVE CWD TRACKING">LIVE</button>
+            </div>
+            <div class="file-heading-meta hud-label">
+              <button class="status-chip dotfiles-chip" id="dotfilesToggle" type="button"
+                aria-label="Pokaz ukryte pliki" aria-pressed="false" title="SHOW DOTFILES (⌘⇧.)">DOTS HIDDEN</button>
+              <span id="fileBrowserSession">TTY --</span>
+              <span id="fileBrowserCount">-- ITEMS</span>
+            </div>
+            <button class="icon-action hud-label" id="filesClose" type="button" aria-label="Close file system panel">CLOSE</button>
+          </header>
+          <div class="file-view-switch" role="group" aria-label="Tryb widoku plikow" id="fileViewSwitch">
+            <button class="view-mode-btn hud-label is-on" type="button" data-view-mode="compact" aria-pressed="true" title="LISTA">LIST</button>
+            <button class="view-mode-btn hud-label" type="button" data-view-mode="detailed" aria-pressed="false" title="LISTA ZE SZCZEGOLAMI">DETAILS</button>
+            <button class="view-mode-btn hud-label" type="button" data-view-mode="tiles" aria-pressed="false" title="KAFELKI">TILES</button>
+          </div>
+          <div class="file-browser" id="filesView">
+            <div class="file-browser__cwd" id="fileBrowserCwd" title="">CWD / --</div>
+            <div class="file-list-columns hud-label" id="fileListColumns" hidden>
+              <span class="file-col-name">NAME</span>
+              <span class="file-col-size">SIZE</span>
+              <span class="file-col-modified">MODIFIED</span>
+            </div>
+            <ol class="file-list" id="fileList" aria-live="polite">
+              <li class="file-empty hud-label">AWAITING PTY</li>
+            </ol>
+            <div class="telemetry-error hud-label" id="fileBrowserError" hidden>DIRECTORY DATA N/A</div>
+          </div>
+        </aside>
+
+        <aside class="assistant-panel panel hud-frame side-panel" id="assistantPanel" aria-labelledby="assistantPanelTitle" hidden>
           <button class="assistant-resizer" id="assistantResizer" type="button" role="separator"
             aria-label="Resize assistant panel" aria-orientation="vertical" aria-valuemin="300"
             aria-valuemax="640" aria-valuenow="390" tabindex="0"></button>
@@ -250,7 +296,7 @@
           </div>
           <div class="status-chips" aria-label="Stan interfejsu">
             <button class="status-chip hud-label is-on" id="systemGroupToggle" type="button" aria-pressed="true">SYSTEM <span id="systemGroupState">ON</span></button>
-            <button class="status-chip hud-label is-on" id="filesGroupToggle" type="button" aria-pressed="true">FILES <span id="filesGroupState">ON</span></button>
+            <button class="status-chip hud-label" id="filesGroupToggle" type="button" aria-controls="filesPanel" aria-expanded="false" aria-pressed="false">FILES <span id="filesGroupState">OFF</span></button>
             <button class="status-chip hud-label" id="scanlinesToggle" type="button" aria-pressed="false">SCANLINES <span id="scanlinesState">OFF</span></button>
             <button class="status-chip hud-label" id="soundToggle" type="button" aria-pressed="false">SOUND <span id="soundState">OFF</span></button>
           </div>
@@ -353,5 +399,6 @@
     <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="renderer.js"></script>
     <script src="assistant-ui.js"></script>
+    <script src="filesystem-ui.js"></script>
   </body>
 </html>

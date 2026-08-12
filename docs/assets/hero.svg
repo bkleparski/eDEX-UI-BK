@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="100%" role="img" aria-label="EBARTNET-UI — GRID TERMINAL for macOS on Apple Silicon">
+  <defs>
+    <filter id="cyanGlow" x="-30%" y="-60%" width="160%" height="220%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="centerBloom" cx="50%" cy="46%" r="62%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#00e5ff" stroke-opacity="0.05" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="320" fill="#02080a"/>
+  <rect width="1200" height="320" fill="url(#gridPattern)"/>
+  <rect width="1200" height="320" fill="url(#centerBloom)"/>
+
+  <g fill="none" stroke="#00e5ff" stroke-width="2" stroke-opacity="0.85" stroke-linecap="square">
+    <path d="M24 66V24h56"/>
+    <path d="M1176 66V24h-56"/>
+    <path d="M24 254v42h56"/>
+    <path d="M1176 254v42h-56"/>
+  </g>
+
+  <g stroke="#087f9c" stroke-opacity="0.45" stroke-width="1">
+    <path d="M96 24h180"/>
+    <path d="M924 296h180"/>
+  </g>
+
+  <text x="600" y="168" text-anchor="middle" fill="#00e5ff" filter="url(#cyanGlow)"
+    font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    font-size="76" font-weight="700" letter-spacing="14">EBARTNET-UI</text>
+
+  <g stroke="#00e5ff" stroke-opacity="0.55" stroke-width="1">
+    <path d="M210 208h300"/>
+    <path d="M690 208h300"/>
+  </g>
+  <rect x="596" y="204" width="8" height="8" fill="#ff9f1c" filter="url(#softGlow)"/>
+
+  <text x="600" y="248" text-anchor="middle" fill="#087f9c"
+    font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    font-size="17" letter-spacing="7">GRID TERMINAL · macOS · APPLE SILICON</text>
+
+  <g fill="#8ff8ff" fill-opacity="0.75"
+    font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" letter-spacing="3">
+    <text x="52" y="52">ELECTRON</text>
+    <text x="1148" y="52" text-anchor="end">XTERM.JS</text>
+    <text x="52" y="282">NODE-PTY</text>
+    <text x="1148" y="282" text-anchor="end">ARM64</text>
+  </g>
+
+  <g stroke="#8ff8ff" stroke-opacity="0.10" stroke-width="1">
+    <path d="M0 100h1200"/>
+    <path d="M0 220h1200"/>
+  </g>
+</svg>

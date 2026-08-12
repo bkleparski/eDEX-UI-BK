@@ -59,6 +59,7 @@ let fileBrowserMode = 'live';
 let browsedDirectory = null;
 let showHiddenFiles = false;
 let fileBrowserRequestId = 0;
+let lastFileBrowserResult = null;
 let imagePreviewTimer = null;
 let imagePreviewRequestToken = 0;
 let imagePreviewHoverStartedAt = 0;
@@ -134,6 +135,15 @@ function setMeter(id, percent) {
   document.getElementById(id).style.transform = `scaleX(${value === null ? 0 : Math.min(Math.max(value, 0), 100) / 100})`;
 }
 
+function setStackedMeter(id, offsetPercent, sizePercent) {
+  const clamp = (value) => Math.min(Math.max(numeric(value) ?? 0, 0), 100);
+  const offset = clamp(offsetPercent);
+  const size = Math.min(clamp(sizePercent), 100 - offset);
+  const element = document.getElementById(id);
+  element.style.left = `${offset}%`;
+  element.style.width = `${size}%`;
+}
+
 function setWarningState(element, enabled) {
   element.classList.toggle('is-warning', enabled);
 }
@@ -172,7 +182,7 @@ function renderProcesses(processes) {
     return;
   }
 
-  processes.slice(0, 6).forEach((processInfo, index) => {
+  processes.forEach((processInfo, index) => {
     const row = document.createElement('li');
     row.className = 'process-row';
 
@@ -209,10 +219,28 @@ function renderMonitoring(sample) {
   renderCoreLoads(sample.cpu?.cores);
 
   document.getElementById('memoryValue').textContent = formatPercent(sample.memory?.usePercent, 0);
+  document.getElementById('memoryTotal').textContent = formatCapacity(sample.memory?.totalBytes);
   document.getElementById('memoryUsed').textContent = formatCapacity(sample.memory?.usedBytes);
+  document.getElementById('memoryUsedShare').textContent = formatPercent(sample.memory?.usePercent, 0);
+  document.getElementById('memoryCached').textContent = formatCapacity(sample.memory?.cachedBytes);
+  document.getElementById('memoryCachedShare').textContent = formatPercent(sample.memory?.cachedPercent, 0);
   document.getElementById('memoryAvailable').textContent = formatCapacity(sample.memory?.availableBytes);
+  document.getElementById('memoryAvailableShare').textContent = formatPercent(sample.memory?.availablePercent, 0);
+  document.getElementById('memoryFree').textContent = formatCapacity(sample.memory?.freeBytes);
+  document.getElementById('memoryFreeShare').textContent = formatPercent(sample.memory?.freePercent, 0);
   setMeter('memoryMeter', sample.memory?.usePercent);
+  // The cached segment is stacked on top of the used bar, so offset it by the used share.
+  setStackedMeter('memoryCachedMeter', sample.memory?.usePercent, sample.memory?.cachedPercent);
   setWarningState(document.getElementById('memoryValue'), numeric(sample.memory?.usePercent) > 90);
+
+  const swapTotal = numeric(sample.memory?.swapTotalBytes) ?? 0;
+  const swapRow = document.getElementById('memorySwapRow');
+  swapRow.hidden = swapTotal <= 0;
+  if (swapTotal > 0) {
+    document.getElementById('memorySwap').textContent = `${formatCapacity(sample.memory.swapUsedBytes)} / ${formatCapacity(swapTotal)}`;
+    document.getElementById('memorySwapShare').textContent = formatPercent(sample.memory.swapPercent, 0);
+    setWarningState(swapRow, numeric(sample.memory.swapPercent) > 80);
+  }
 
   const hasBattery = sample.battery?.hasBattery === true;
   const batteryPercent = numeric(sample.battery?.percent);
@@ -375,6 +403,53 @@ function fileTypeMarker(type) {
   if (type === 'link') return '[L]';
   if (type === 'file') return '[F]';
   return '[?]';
+}
+
+const fileIconPaths = {
+  parent: ['M3 7.5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z', 'M12 17v-5m0 0-2.2 2.2M12 12l2.2 2.2'],
+  directory: ['M3 7.5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z'],
+  file: ['M6 3.5h8l4 4v13H6z', 'M14 3.5v4h4'],
+  link: [
+    'M10.5 13.5a3.5 3.5 0 0 1 0-5l2-2a3.5 3.5 0 0 1 5 5l-1 1',
+    'M13.5 10.5a3.5 3.5 0 0 1 0 5l-2 2a3.5 3.5 0 0 1-5-5l1-1'
+  ],
+  other: ['M6 3.5h8l4 4v13H6z']
+};
+
+function createFileIcon(entry) {
+  const key = entry.parent ? 'parent' : fileIconPaths[entry.type] ? entry.type : 'other';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'file-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  for (const definition of fileIconPaths[key]) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', definition);
+    svg.append(path);
+  }
+  return svg;
+}
+
+function formatFileSize(bytes) {
+  const value = numeric(bytes);
+  if (value === null) return '--';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / (1024 ** 2)).toFixed(1)} MB`;
+  return `${(value / (1024 ** 3)).toFixed(1)} GB`;
+}
+
+function formatFileModified(modifiedMs) {
+  const value = numeric(modifiedMs);
+  if (value === null) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--';
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const datePart = date.toLocaleDateString('pl-PL', sameYear ? { day: '2-digit', month: 'short' } : { day: '2-digit', month: 'short', year: 'numeric' });
+  const timePart = date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  return `${datePart} ${timePart}`;
 }
 
 function isPreviewableImage(entry) {
@@ -597,8 +672,17 @@ function resumeLiveFileBrowser({ refresh = true } = {}) {
   if (refresh) refreshFileBrowser();
 }
 
+function renderCurrentFileBrowserResult() {
+  renderFileBrowser(lastFileBrowserResult);
+}
+
 function renderFileBrowser(result) {
+  lastFileBrowserResult = result;
   const list = document.getElementById('fileList');
+  const viewMode = document.body.dataset.fileViewMode || 'compact';
+  list.classList.toggle('file-list--detailed', viewMode === 'detailed');
+  list.classList.toggle('file-list--tiles', viewMode === 'tiles');
+  document.getElementById('fileListColumns').hidden = viewMode !== 'detailed';
   list.replaceChildren();
   const ready = result?.status === 'ok';
   document.body.dataset.fileBrowserReady = String(ready);
@@ -648,17 +732,24 @@ function renderFileBrowser(result) {
     const marker = document.createElement('span');
     marker.className = 'file-marker';
     marker.textContent = fileTypeMarker(entry.type);
+    const icon = createFileIcon(entry);
     const name = document.createElement('span');
     name.className = 'file-name';
     name.textContent = entry.parent ? '..' : `${entry.name}${entry.type === 'directory' ? '/' : ''}`;
-    row.append(marker, name);
+    const size = document.createElement('span');
+    size.className = 'file-size';
+    size.textContent = entry.parent ? '' : entry.type === 'directory' ? '--' : formatFileSize(entry.sizeBytes);
+    const modified = document.createElement('span');
+    modified.className = 'file-modified';
+    modified.textContent = entry.parent ? '' : formatFileModified(entry.modifiedMs);
+    row.append(marker, icon, name, size, modified);
     list.append(row);
   });
   reconcileImagePreviewRow(list);
 }
 
 async function refreshFileBrowser(directoryPath = null) {
-  if (document.body.classList.contains('files-group-hidden') || fileRefreshInFlight) return;
+  if (document.getElementById('filesPanel').hidden || fileRefreshInFlight) return;
   const requestedSessionId = activeSessionId;
   const requestedMode = fileBrowserMode;
   const requestedDirectory = requestedMode === 'browsing' ? (directoryPath || browsedDirectory) : null;
@@ -946,33 +1037,21 @@ function toggleScanlines() {
   focusTerminal();
 }
 
-function dataVisibilityState() {
-  const systemVisible = !document.body.classList.contains('system-group-hidden');
-  const filesVisible = !document.body.classList.contains('files-group-hidden');
-  if (systemVisible && filesVisible) return 'both';
-  if (systemVisible) return 'system-only';
-  if (filesVisible) return 'files-only';
-  return 'none';
-}
-
-function recordDataVisibilityState() {
-  const state = dataVisibilityState();
-  document.body.dataset.dataVisibilityState = state;
+function recordSystemVisibilityState(visible) {
+  document.body.dataset.dataVisibilityState = visible ? 'system-visible' : 'system-hidden';
   if (!isVisualTest) return;
 
   const visited = new Set((document.body.dataset.dataVisibilityStates || '').split(',').filter(Boolean));
-  visited.add(state);
+  visited.add(document.body.dataset.dataVisibilityState);
   document.body.dataset.dataVisibilityStates = [...visited].join(',');
 
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const samples = JSON.parse(document.body.dataset.dataVisibilityGeometry || '{}');
-    samples[state] = {
+    samples[document.body.dataset.dataVisibilityState] = {
       panelVisible: getComputedStyle(document.getElementById('telemetryPanel')).display !== 'none',
       systemVisible: getComputedStyle(document.getElementById('systemGroup')).display !== 'none',
-      filesVisible: getComputedStyle(document.querySelector('.files-section')).display !== 'none',
       terminalWidth: document.querySelector('.terminal-panel').getBoundingClientRect().width,
       terminalScreenWidth: document.querySelector('.terminal-instance:not([hidden]) .xterm-screen')?.getBoundingClientRect().width || 0,
-      fileListHeight: document.getElementById('fileList').clientHeight,
       visibleProcessCount: [...document.querySelectorAll('#processList .process-row')]
         .filter((row) => row.getClientRects().length > 0).length
     };
@@ -980,32 +1059,24 @@ function recordDataVisibilityState() {
   }));
 }
 
-function syncDataPanelVisibility() {
-  const systemVisible = !document.body.classList.contains('system-group-hidden');
-  const filesVisible = !document.body.classList.contains('files-group-hidden');
-  document.body.classList.toggle('telemetry-panel-hidden', !systemVisible && !filesVisible);
-  recordDataVisibilityState();
-  if (filesVisible) refreshFileBrowser();
-  focusTerminal();
-}
-
-function updateDataGroupVisibility(group, visible) {
-  const isSystem = group === 'system';
-  const hiddenClass = isSystem ? 'system-group-hidden' : 'files-group-hidden';
-  const button = document.getElementById(isSystem ? 'systemGroupToggle' : 'filesGroupToggle');
-  const state = document.getElementById(isSystem ? 'systemGroupState' : 'filesGroupState');
-  const counter = isSystem ? 'systemToggleCount' : 'filesToggleCount';
-  document.body.dataset[counter] = String((Number(document.body.dataset[counter]) || 0) + 1);
-  document.body.classList.toggle(hiddenClass, !visible);
+function setSystemGroupVisible(visible) {
+  document.body.classList.toggle('system-group-hidden', !visible);
+  document.body.classList.toggle('telemetry-panel-hidden', !visible);
+  const button = document.getElementById('systemGroupToggle');
+  const state = document.getElementById('systemGroupState');
   button.classList.toggle('is-on', visible);
   button.setAttribute('aria-pressed', String(visible));
   state.textContent = visible ? 'ON' : 'OFF';
-  syncDataPanelVisibility();
+  document.body.dataset.systemToggleCount = String((Number(document.body.dataset.systemToggleCount) || 0) + 1);
+  recordSystemVisibilityState(visible);
+  // Showing the telemetry column shrinks the space the side panels may occupy,
+  // so let their resizers re-clamp a stored width that no longer fits.
+  window.dispatchEvent(new Event('resize'));
+  focusTerminal();
 }
 
-function toggleDataGroup(group) {
-  const hiddenClass = group === 'system' ? 'system-group-hidden' : 'files-group-hidden';
-  updateDataGroupVisibility(group, document.body.classList.contains(hiddenClass));
+function toggleSystemGroup() {
+  setSystemGroupVisible(document.body.classList.contains('system-group-hidden'));
 }
 
 function updateClock() {
@@ -1026,9 +1097,8 @@ function initializeControls() {
   updateSound(soundEnabled, false);
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
-  document.getElementById('systemGroupToggle').addEventListener('click', () => toggleDataGroup('system'));
-  document.getElementById('filesGroupToggle').addEventListener('click', () => toggleDataGroup('files'));
-  syncDataPanelVisibility();
+  document.getElementById('systemGroupToggle').addEventListener('click', toggleSystemGroup);
+  recordSystemVisibilityState(!document.body.classList.contains('system-group-hidden'));
   updateClock();
   const clockTimer = setInterval(updateClock, 1_000);
   window.addEventListener('beforeunload', () => clearInterval(clockTimer), { once: true });
@@ -1048,7 +1118,7 @@ function initializeControls() {
       return;
     }
     if (event.shiftKey && event.code === 'Period'
-      && !document.body.classList.contains('files-group-hidden')) {
+      && !document.getElementById('filesPanel').hidden) {
       event.preventDefault();
       event.stopPropagation();
       toggleDotfiles();
@@ -1058,11 +1128,11 @@ function initializeControls() {
     if (event.code === 'Digit1') {
       event.preventDefault();
       event.stopPropagation();
-      toggleDataGroup('system');
+      toggleSystemGroup();
     } else if (event.code === 'Digit2') {
       event.preventDefault();
       event.stopPropagation();
-      toggleDataGroup('files');
+      document.getElementById('filesGroupToggle').click();
     } else if (event.code === 'Digit3') {
       event.preventDefault();
       event.stopPropagation();

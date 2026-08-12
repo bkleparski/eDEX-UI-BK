@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 200" width="100%" role="img" aria-label="Features: real zsh PTY, live telemetry, file browser, AI assistant">
+  <defs>
+    <filter id="iconGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="gridPatternSmall" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#00e5ff" stroke-opacity="0.04" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="200" fill="#02080a"/>
+  <rect width="1200" height="200" fill="url(#gridPatternSmall)"/>
+
+  <g stroke="#087f9c" stroke-opacity="0.28" stroke-width="1">
+    <path d="M300 40v120"/>
+    <path d="M600 40v120"/>
+    <path d="M900 40v120"/>
+  </g>
+
+  <g fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#iconGlow)">
+    <rect x="118" y="52" width="64" height="48" rx="2"/>
+    <path d="M118 66h64"/>
+    <path d="M132 82l10 8-10 8"/>
+    <path d="M150 98h20"/>
+  </g>
+
+  <g fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#iconGlow)">
+    <path d="M420 100V56"/>
+    <path d="M420 100h60"/>
+    <path d="M424 92l14-18 12 12 16-24"/>
+    <path d="M466 62h8v8" stroke-opacity="0.7"/>
+  </g>
+
+  <g fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#iconGlow)">
+    <path d="M718 60a2 2 0 0 1 2-2h14l6 6h22a2 2 0 0 1 2 2v32a2 2 0 0 1-2 2h-42a2 2 0 0 1-2-2z"/>
+    <path d="M726 74h34" stroke-opacity="0.55"/>
+    <path d="M726 84h22" stroke-opacity="0.55"/>
+  </g>
+
+  <g fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#iconGlow)">
+    <rect x="1022" y="58" width="40" height="40" rx="3"/>
+    <rect x="1034" y="70" width="16" height="16" rx="1" stroke-opacity="0.75"/>
+    <path d="M1032 58v-8M1042 58v-8M1052 58v-8"/>
+    <path d="M1032 98v8M1042 98v8M1052 98v8"/>
+    <path d="M1022 68h-8M1022 78h-8M1022 88h-8"/>
+    <path d="M1062 68h8M1062 78h8M1062 88h8"/>
+  </g>
+
+  <g fill="#8ff8ff" text-anchor="middle"
+    font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" letter-spacing="3">
+    <text x="150" y="140">REAL ZSH PTY</text>
+    <text x="450" y="140">LIVE TELEMETRY</text>
+    <text x="750" y="140">FILE BROWSER</text>
+    <text x="1050" y="140">AI ASSISTANT</text>
+  </g>
+
+  <g fill="#087f9c" text-anchor="middle"
+    font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" letter-spacing="2">
+    <text x="150" y="160">node-pty · xterm.js</text>
+    <text x="450" y="160">cpu · ram · net · disk</text>
+    <text x="750" y="160">list · details · tiles</text>
+    <text x="1050" y="160">local &amp; cloud models</text>
+  </g>
+</svg>

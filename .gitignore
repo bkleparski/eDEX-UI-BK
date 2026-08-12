@@ -13,3 +13,4 @@ bug-*.png
 .env
 .env.*
 !.env.example
+session-logs/
