@@ -64,29 +64,16 @@ and *Tron: Legacy*; none of the original source was copied.
   <img src="docs/assets/screenshot-assistant.png" alt="AI assistant panel docked next to the terminal" width="100%">
 </p>
 
-## Quick start
+## Download
 
-> **Requirements:** macOS on Apple Silicon, Node.js 22 or newer.
+**[⬇ EBARTNET-UI 0.1.0 for Apple Silicon (.dmg)](https://github.com/bkleparski/eDEX-UI-BK/releases/latest)**
 
-```bash
-git clone https://github.com/bkleparski/eDEX-UI-BK.git
-cd eDEX-UI-BK
-npm install          # also rebuilds node-pty for arm64
-npm start
-```
+Open the `.dmg` and drag the app to `Applications`. That's it — nothing else to install.
 
-### Build a standalone `.app`
+> **First launch.** The app is ad-hoc signed and not notarised by Apple, so macOS will warn
+> about an unidentified developer. Right-click the icon → **Open** → confirm **Open**.
 
-```bash
-npm run dist
-```
-
-Produces `dist/mac-arm64/EBARTNET-UI.app` plus a `.dmg` and `.zip` in `dist/`.
-Drag the `.app` to `/Applications` and launch it like any other program — this is the
-intended way to use it day to day; `npm start` is for development.
-
-The build is ad-hoc signed and not notarised, so on first launch macOS will ask you to
-confirm an app from an unidentified developer.
+Requires macOS on Apple Silicon (arm64).
 
 > **Keep a single copy.** Two builds of this app in different folders share one bundle
 > identifier, and macOS may then open whichever it finds first — which looks exactly like
@@ -163,9 +150,24 @@ network at all. Every outbound request goes through the main process.
 
 ## Development
 
+Only needed if you want to change the code — users install the `.dmg` above.
+
+> **Requirements:** macOS on Apple Silicon, Node.js 22 or newer.
+
+```bash
+git clone https://github.com/bkleparski/eDEX-UI-BK.git
+cd eDEX-UI-BK
+npm install      # also rebuilds node-pty for arm64
+npm start        # run from source
+npm run dist     # produce the .app, .dmg and .zip in dist/
+```
+
+### Tests
+
 ```bash
 npm run test:unit             # provider, config and CLI-bridge unit tests
 npm run test:smoke            # boots Electron, verifies the PTY round-trip
+npm run test:files            # file manager + theme behaviour on a temp directory
 npm run test:visual           # full UI walkthrough + screenshot diagnostics
 npm run test:assistant-ui     # live assistant run (needs Ollama + LM Studio up)
 npm run test:providers:local  # Ollama / LM Studio reachability
@@ -173,7 +175,8 @@ npm run test:cli:local        # ai / search shell commands
 npm run test:providers:cloud  # needs OPENROUTER_API_KEY + OPENCODE_GO_API_KEY in env
 ```
 
-No test script contains or writes credentials.
+Screenshots for the README are generated with `EDEX_FORCE_OFFLINE_TEST=1` so no LAN or
+public IP address ends up in a published image. No test script contains or writes credentials.
 
 ## Credits
 
