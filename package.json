@@ -56,7 +56,8 @@
     "test:providers:cloud": "node scripts/cloud-provider-check.js",
     "test:smoke": "EDEX_SMOKE_TEST=1 electron .",
     "test:visual": "EDEX_VISUAL_TEST=1 electron .",
-    "test:assistant-ui": "EDEX_ASSISTANT_VISUAL_TEST=1 electron ."
+    "test:assistant-ui": "EDEX_ASSISTANT_VISUAL_TEST=1 electron .",
+    "test:files": "EDEX_FILES_TEST=1 electron ."
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

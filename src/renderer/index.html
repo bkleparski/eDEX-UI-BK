@@ -211,22 +211,38 @@
             </div>
             <button class="icon-action hud-label" id="filesClose" type="button" aria-label="Close file system panel">CLOSE</button>
           </header>
-          <div class="file-view-switch" role="group" aria-label="Tryb widoku plikow" id="fileViewSwitch">
-            <button class="view-mode-btn hud-label is-on" type="button" data-view-mode="compact" aria-pressed="true" title="LISTA">LIST</button>
-            <button class="view-mode-btn hud-label" type="button" data-view-mode="detailed" aria-pressed="false" title="LISTA ZE SZCZEGOLAMI">DETAILS</button>
-            <button class="view-mode-btn hud-label" type="button" data-view-mode="tiles" aria-pressed="false" title="KAFELKI">TILES</button>
+          <div class="file-toolbar">
+            <div class="file-view-switch" role="group" aria-label="Tryb widoku plikow" id="fileViewSwitch">
+              <button class="view-mode-btn hud-label is-on" type="button" data-view-mode="compact" aria-pressed="true" title="LISTA">LIST</button>
+              <button class="view-mode-btn hud-label" type="button" data-view-mode="detailed" aria-pressed="false" title="LISTA ZE SZCZEGOLAMI">DETAILS</button>
+              <button class="view-mode-btn hud-label" type="button" data-view-mode="tiles" aria-pressed="false" title="KAFELKI">TILES</button>
+            </div>
+            <div class="file-toolbar__actions">
+              <button class="view-mode-btn hud-label" id="fileNewFolder" type="button" title="NOWY FOLDER (⇧⌘N)">NEW</button>
+              <button class="view-mode-btn hud-label" id="fileFilterToggle" type="button" aria-pressed="false" title="FILTRUJ (⌘F)">FIND</button>
+            </div>
+          </div>
+          <div class="file-filter" id="fileFilterBar" hidden>
+            <label class="sr-only" for="fileFilterInput">Filtruj pliki</label>
+            <input class="file-filter__input" id="fileFilterInput" type="search" autocomplete="off"
+              spellcheck="false" placeholder="FILTR NAZWY — ESC ANULUJ">
+            <span class="file-filter__count hud-label" id="fileFilterCount"></span>
           </div>
           <div class="file-browser" id="filesView">
             <div class="file-browser__cwd" id="fileBrowserCwd" title="">CWD / --</div>
             <div class="file-list-columns hud-label" id="fileListColumns" hidden>
-              <span class="file-col-name">NAME</span>
-              <span class="file-col-size">SIZE</span>
-              <span class="file-col-modified">MODIFIED</span>
+              <button class="file-col-name file-sort-btn" type="button" data-sort-key="name">NAME</button>
+              <button class="file-col-size file-sort-btn" type="button" data-sort-key="size">SIZE</button>
+              <button class="file-col-modified file-sort-btn" type="button" data-sort-key="modified">MODIFIED</button>
             </div>
-            <ol class="file-list" id="fileList" aria-live="polite">
+            <ol class="file-list" id="fileList" aria-live="polite" tabindex="0">
               <li class="file-empty hud-label">AWAITING PTY</li>
             </ol>
             <div class="telemetry-error hud-label" id="fileBrowserError" hidden>DIRECTORY DATA N/A</div>
+          </div>
+          <div class="file-statusbar hud-label" id="fileStatusBar">
+            <span id="fileStatusSelection">NIC NIE ZAZNACZONO</span>
+            <span id="fileStatusClipboard"></span>
           </div>
         </aside>
 
@@ -274,6 +290,25 @@
         <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-action="rename">RENAME</button>
         <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-action="auto-name" hidden>AUTO NAME</button>
         <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-action="close">CLOSE</button>
+      </div>
+
+      <div class="tty-context-menu file-context-menu hud-frame" id="fileContextMenu" role="menu"
+        aria-label="Akcje pliku" aria-hidden="true" hidden>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="open">OTWÓRZ</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="rename">ZMIEŃ NAZWĘ</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="insert">DODAJ ŚCIEŻKĘ DO TERMINALA</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="copy-path">KOPIUJ ŚCIEŻKĘ</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="copy">KOPIUJ</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="move">PRZENIEŚ…</button>
+        <button class="tty-context-menu__item hud-label" type="button" role="menuitem" data-file-action="reveal">POKAŻ W FINDERZE</button>
+        <button class="tty-context-menu__item hud-label is-destructive" type="button" role="menuitem" data-file-action="trash">USUŃ DO KOSZA</button>
+      </div>
+
+      <div class="tty-rename-popover file-rename-popover hud-frame" id="fileRenamePopover" aria-hidden="true" hidden>
+        <label class="hud-label" id="fileRenameLabel" for="fileRenameInput">NOWA NAZWA</label>
+        <input class="tty-rename-input" id="fileRenameInput" type="text" maxlength="255"
+          autocomplete="off" spellcheck="false" aria-labelledby="fileRenameLabel">
+        <span class="tty-rename-hint hud-label">ENTER ZATWIERDŹ · ESC ANULUJ</span>
       </div>
 
       <div class="tty-rename-popover hud-frame" id="ttyRenamePopover" aria-hidden="true" hidden>

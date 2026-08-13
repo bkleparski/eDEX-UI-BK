@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, nativeImage, net, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, shell } = require('electron');
 const { execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -22,12 +22,14 @@ const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
 const isAssistantVisualTest = process.env.EDEX_ASSISTANT_VISUAL_TEST === '1';
 const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
-const isAutomatedTest = isSmokeTest || isVisualTest || isAssistantVisualTest;
+const isFilesTest = process.env.EDEX_FILES_TEST === '1';
+const isAutomatedTest = isSmokeTest || isVisualTest || isAssistantVisualTest || isFilesTest;
 const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
 const minimumVisualTerminalWidthWithFilesPanel = visualTestWidth < 1200 ? 260 : 350;
 const minimumVisualFileListHeight = visualTestHeight < 700 ? 24 : 30;
 const visualBrowserRoot = path.join('/private/tmp', 'edex-ui-bk-phase13-browser');
+const filesTestRoot = path.join('/private/tmp', 'edex-ui-bk-files-test');
 const visualBrowserChild = path.join(visualBrowserRoot, 'child');
 const visualBrowserFile = path.join(visualBrowserRoot, "O'Brien phase 11.txt");
 const visualBrowserImage = path.join(visualBrowserChild, 'preview.svg');
@@ -55,6 +57,7 @@ const PUBLIC_IP_TIMEOUT_MS = 3_000;
 const PUBLIC_IP_ENDPOINT = 'https://api.ipify.org';
 const MAX_TERMINALS_PER_WINDOW = 8;
 const MAX_FILE_ENTRIES = 80;
+const MAX_BATCH_ENTRIES = 200;
 const IMAGE_PREVIEW_MAX_BYTES = 15 * 1024 * 1024;
 const IMAGE_PREVIEW_MAX_SOURCE_DIMENSION = 480;
 const IMAGE_PREVIEW_CACHE_LIMIT = 24;
@@ -73,7 +76,7 @@ const imagePreviewCache = new Map();
 let imagePreviewCacheBytes = 0;
 
 if (isAutomatedTest) {
-  const testKind = isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : 'visual';
+  const testKind = isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : isFilesTest ? 'files' : 'visual';
   app.setPath('userData', path.join(os.tmpdir(), `edex-ui-bk-${testKind}-${process.pid}`));
 }
 
@@ -242,6 +245,83 @@ function validDirectoryPath(value) {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4_096
     || value.includes('\0') || !path.isAbsolute(value)) return null;
   return path.resolve(value);
+}
+
+// File-manager mutations arrive from the renderer, so every path is re-validated
+// here and never trusted as-is. The renderer itself never touches the disk.
+function validEntryPaths(value) {
+  const list = Array.isArray(value) ? value : [value];
+  if (list.length === 0 || list.length > MAX_BATCH_ENTRIES) return null;
+  const resolved = list.map((item) => validDirectoryPath(item));
+  return resolved.every(Boolean) ? [...new Set(resolved)] : null;
+}
+
+function validEntryName(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.trim();
+  if (!name || name.length > 255 || name === '.' || name === '..') return null;
+  if (name.includes('\0') || name.includes('/')) return null;
+  return name;
+}
+
+async function pathExists(target) {
+  try {
+    await fs.promises.lstat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Finder-style "name copy.ext" suffixing so a collision never silently overwrites.
+async function uniqueDestination(directory, name) {
+  const target = path.join(directory, name);
+  if (!await pathExists(target)) return target;
+  const extension = path.extname(name);
+  const stem = path.basename(name, extension);
+  for (let index = 2; index <= 999; index += 1) {
+    const candidate = path.join(directory, `${stem} ${index}${extension}`);
+    if (!await pathExists(candidate)) return candidate;
+  }
+  throw new Error('Could not find a free name in the destination folder.');
+}
+
+async function transferEntries(sourcePaths, destinationDirectory, mode) {
+  const destination = validDirectoryPath(destinationDirectory);
+  if (!destination) throw new Error('Invalid destination folder.');
+  const stats = await fs.promises.stat(destination).catch(() => null);
+  if (!stats?.isDirectory()) throw new Error('Destination is not a folder.');
+
+  const results = [];
+  for (const source of sourcePaths) {
+    const name = path.basename(source);
+    try {
+      if (source === destination || destination.startsWith(`${source}${path.sep}`)) {
+        throw new Error('Cannot move a folder into itself.');
+      }
+      if (path.dirname(source) === destination && mode === 'move') {
+        results.push({ path: source, status: 'skipped', reason: 'Already in destination.' });
+        continue;
+      }
+      const target = await uniqueDestination(destination, name);
+      if (mode === 'move') {
+        try {
+          await fs.promises.rename(source, target);
+        } catch (error) {
+          // EXDEV: crossing a volume boundary needs a copy followed by a delete.
+          if (error.code !== 'EXDEV') throw error;
+          await fs.promises.cp(source, target, { recursive: true, errorOnExist: true, force: false });
+          await fs.promises.rm(source, { recursive: true, force: false });
+        }
+      } else {
+        await fs.promises.cp(source, target, { recursive: true, errorOnExist: true, force: false });
+      }
+      results.push({ path: source, status: 'ok', target });
+    } catch (error) {
+      results.push({ path: source, status: 'error', reason: safeLabel(error.message, 'Operation failed.', 160) });
+    }
+  }
+  return { status: results.some((item) => item.status === 'error') ? 'partial' : 'ok', results };
 }
 
 function cachedImagePreview(cacheKey) {
@@ -835,6 +915,98 @@ function registerFilesIpc() {
     requireTrustedSender(event);
     return previewImageFile(payload.filePath);
   });
+
+  ipcMain.handle('files:open', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const [target] = validEntryPaths(payload.filePath) || [];
+    if (!target) throw new Error('Invalid file path.');
+    const message = await shell.openPath(target);
+    if (message) throw new Error(safeLabel(message, 'Could not open the file.', 160));
+    return { status: 'ok' };
+  });
+
+  ipcMain.handle('files:reveal', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const [target] = validEntryPaths(payload.filePath) || [];
+    if (!target) throw new Error('Invalid file path.');
+    shell.showItemInFolder(target);
+    return { status: 'ok' };
+  });
+
+  ipcMain.handle('files:rename', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const [target] = validEntryPaths(payload.filePath) || [];
+    const name = validEntryName(payload.name);
+    if (!target || !name) throw new Error('Invalid rename request.');
+    const destination = path.join(path.dirname(target), name);
+    if (destination === target) return { status: 'ok', target };
+    if (await pathExists(destination)) throw new Error('A file with that name already exists.');
+    await fs.promises.rename(target, destination);
+    return { status: 'ok', target: destination };
+  });
+
+  ipcMain.handle('files:trash', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const targets = validEntryPaths(payload.filePaths);
+    if (!targets) throw new Error('Invalid delete request.');
+    const results = [];
+    for (const target of targets) {
+      try {
+        await shell.trashItem(target);
+        results.push({ path: target, status: 'ok' });
+      } catch (error) {
+        results.push({ path: target, status: 'error', reason: safeLabel(error.message, 'Could not move to Trash.', 160) });
+      }
+    }
+    return { status: results.some((item) => item.status === 'error') ? 'partial' : 'ok', results };
+  });
+
+  ipcMain.handle('files:transfer', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const targets = validEntryPaths(payload.filePaths);
+    const mode = payload.mode === 'copy' ? 'copy' : 'move';
+    if (!targets) throw new Error('Invalid transfer request.');
+    return transferEntries(targets, payload.destination, mode);
+  });
+
+  ipcMain.handle('files:mkdir', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const parent = validDirectoryPath(payload.parentPath);
+    const name = validEntryName(payload.name);
+    if (!parent || !name) throw new Error('Invalid folder request.');
+    const destination = path.join(parent, name);
+    if (await pathExists(destination)) throw new Error('That folder already exists.');
+    await fs.promises.mkdir(destination);
+    return { status: 'ok', target: destination };
+  });
+
+  ipcMain.handle('files:choose-directory', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const defaultPath = validDirectoryPath(payload.defaultPath);
+    const result = await dialog.showOpenDialog(window, {
+      title: 'Wybierz katalog docelowy',
+      buttonLabel: 'Przenieś tutaj',
+      properties: ['openDirectory', 'createDirectory'],
+      ...(defaultPath ? { defaultPath } : {})
+    });
+    if (result.canceled || !result.filePaths.length) return { status: 'cancelled' };
+    return { status: 'ok', directory: result.filePaths[0] };
+  });
+
+  ipcMain.handle('files:confirm', async (event, payload = {}) => {
+    requireTrustedSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showMessageBox(window, {
+      type: 'warning',
+      buttons: ['Anuluj', safeLabel(payload.confirmLabel, 'Potwierdź', 40)],
+      defaultId: 1,
+      cancelId: 0,
+      message: safeLabel(payload.message, 'Potwierdzić operację?', 200),
+      detail: safeLabel(payload.detail, '', 400) || undefined
+    });
+    return { confirmed: result.response === 1 };
+  });
 }
 
 function configureCloudProviders() {
@@ -974,6 +1146,15 @@ function registerAssistantIpc() {
 }
 
 function createWindow() {
+  if (isFilesTest) {
+    fs.rmSync(filesTestRoot, { recursive: true, force: true });
+    fs.mkdirSync(filesTestRoot, { recursive: true });
+    fs.writeFileSync(path.join(filesTestRoot, 'alpha.txt'), 'alpha fixture\n');
+    fs.writeFileSync(path.join(filesTestRoot, 'beta.txt'), 'beta fixture\n');
+    fs.writeFileSync(path.join(filesTestRoot, 'gamma.log'), 'gamma fixture\n');
+    fs.mkdirSync(path.join(filesTestRoot, 'nested'), { recursive: true });
+  }
+
   if (isVisualTest) {
     fs.mkdirSync(visualBrowserChild, { recursive: true });
     for (let index = 0; index < 90; index += 1) {
@@ -1020,7 +1201,9 @@ function createWindow() {
 
   window.loadFile(
     path.join(__dirname, 'renderer', 'index.html'),
-    isAutomatedTest ? { query: { test: isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : 'visual' } } : undefined
+    isAutomatedTest
+      ? { query: { test: isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : isFilesTest ? 'files' : 'visual' } }
+      : undefined
   );
 
   if (isSmokeTest) {
@@ -1075,6 +1258,10 @@ function createWindow() {
             dispatch('dragover');
             dispatch('drop');
             dispatch('dragend', row);
+          };
+          const openRow = (row) => {
+            if (!row) return;
+            row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
           };
           const dispatchPreviewPointer = (row, type = 'pointerover') => {
             const rect = row.getBoundingClientRect();
@@ -1255,7 +1442,7 @@ function createWindow() {
               document.body.dataset.ttyBackgroundClosePreservedActive = 'true';
               const directory = [...document.querySelectorAll('#fileList .file-row')]
                 .find((row) => row.dataset.type === 'directory');
-              directory.click();
+              openRow(directory);
               window.terminalApi.write('tty-02', '/usr/bin/top -l 2 -s 1 >/dev/null\\r');
               waitFor(
                 () => document.body.dataset.ttyTopObserved === 'true'
@@ -1294,13 +1481,13 @@ function createWindow() {
               document.body.dataset.dotfilesLiveFiltered = 'true';
               const child = [...document.querySelectorAll('#fileList .file-row')]
                 .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
-              child.click();
+              openRow(child);
               waitFor(
                 () => document.body.dataset.fileBrowserMode === 'browsing'
                   && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserChild)},
                 () => {
                   document.body.dataset.fileBrowserDescended = 'true';
-                  document.querySelector('#fileList .file-row--parent')?.click();
+                  openRow(document.querySelector('#fileList .file-row--parent'));
                   waitFor(
                     () => document.body.dataset.fileBrowserMode === 'browsing'
                       && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)},
@@ -1342,7 +1529,7 @@ function createWindow() {
                                       setTimeout(() => {
                                         const liveChild = [...document.querySelectorAll('#fileList .file-row')]
                                           .find((row) => row.dataset.path === ${JSON.stringify(visualBrowserChild)});
-                                        liveChild?.click();
+                                        openRow(liveChild);
                                         waitFor(
                                           () => document.body.dataset.fileBrowserMode === 'browsing'
                                             && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserChild)}
@@ -1397,7 +1584,7 @@ function createWindow() {
                                                             });
                                                             document.body.dataset.imagePreviewFinalObserved = 'true';
                                                             dispatchPreviewPointer(cachedRow, 'pointerout');
-                                                            document.querySelector('#fileList .file-row--parent')?.click();
+                                                            openRow(document.querySelector('#fileList .file-row--parent'));
                                                             waitFor(
                                                               () => document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)}
                                                                 && [...document.querySelectorAll('#fileList .file-row')]
@@ -2084,6 +2271,97 @@ function createWindow() {
         }
         app.quit();
       }, 2_000);
+    });
+  }
+
+  if (isFilesTest) {
+    window.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const report = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+            const started = Date.now();
+            const root = ${JSON.stringify(filesTestRoot)};
+            const rows = () => [...document.querySelectorAll('#fileList .file-row')];
+            const rowFor = (name) => rows().find((row) => row.dataset.name === name);
+            const click = (row, init = {}) => row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }));
+            const evidence = {};
+            const step = async () => {
+              document.getElementById('filesGroupToggle').click();
+              await new Promise((r) => setTimeout(r, 400));
+              window.__edexBrowse(root);
+              await new Promise((r) => setTimeout(r, 700));
+              if (!rowFor('alpha.txt')) throw new Error('fixture not listed');
+
+              // 1. single click selects instead of navigating
+              click(rowFor('alpha.txt'));
+              evidence.singleSelect = document.body.dataset.fileSelectionCount === '1';
+              evidence.stillInRoot = document.getElementById('fileBrowserCwd').title === root;
+
+              // 2. cmd+click extends the selection
+              click(rowFor('beta.txt'), { metaKey: true });
+              evidence.metaSelect = document.body.dataset.fileSelectionCount === '2';
+
+              // 3. context menu opens for the selection
+              rowFor('beta.txt').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+              evidence.menuOpen = document.body.dataset.fileContextMenuOpen === 'true';
+              evidence.menuHidesRename = document.querySelector('#fileContextMenu [data-file-action="rename"]').hidden;
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+              evidence.menuClosed = document.body.dataset.fileContextMenuOpen === 'false';
+
+              // 4. rename through the popover
+              click(rowFor('alpha.txt'));
+              rowFor('alpha.txt').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+              document.querySelector('#fileContextMenu [data-file-action="rename"]').click();
+              const input = document.getElementById('fileRenameInput');
+              input.value = 'renamed.txt';
+              input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+              await new Promise((r) => setTimeout(r, 900));
+              evidence.renamed = Boolean(rowFor('renamed.txt')) && !rowFor('alpha.txt');
+
+              // 5. new folder
+              window.__edexNewFolder('created-dir');
+              await new Promise((r) => setTimeout(r, 900));
+              evidence.folderCreated = Boolean(rowFor('created-dir'));
+
+              // 6. sorting toggles direction
+              document.querySelector('.file-sort-btn[data-sort-key="name"]').click();
+              document.querySelector('.file-sort-btn[data-sort-key="name"]').click();
+              evidence.sortActive = document.querySelector('.file-sort-btn[data-sort-key="name"]').classList.contains('is-active');
+
+              // 7. filter narrows the listing
+              document.getElementById('fileFilterToggle').click();
+              const filter = document.getElementById('fileFilterInput');
+              filter.value = 'beta';
+              filter.dispatchEvent(new Event('input', { bubbles: true }));
+              await new Promise((r) => setTimeout(r, 200));
+              evidence.filtered = rows().length === 1 && Boolean(rowFor('beta.txt'));
+              filter.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+              await new Promise((r) => setTimeout(r, 200));
+              evidence.filterCleared = rows().length > 1;
+
+              // 8. trash removes the selection
+              click(rowFor('beta.txt'));
+              await window.filesApi.trash([root + '/beta.txt']);
+              window.__edexBrowse(root);
+              await new Promise((r) => setTimeout(r, 900));
+              evidence.trashed = !rowFor('beta.txt');
+
+              if (Date.now() - started > 25_000) throw new Error('files test timed out');
+              resolve(evidence);
+            };
+            step().catch(reject);
+          })`);
+          console.log(`File manager diagnostics: ${JSON.stringify(report)}`);
+          const failures = Object.entries(report).filter(([, value]) => value !== true).map(([key]) => key);
+          if (failures.length) throw new Error(`failed checks: ${failures.join(', ')}`);
+          console.log('File manager test passed: selection, context menu, rename, mkdir, sort, filter and trash all work.');
+          process.exitCode = 0;
+        } catch (error) {
+          console.error(`File manager test failed: ${error.message}`);
+          process.exitCode = 1;
+        }
+        app.quit();
+      }, 3_500);
     });
   }
 }

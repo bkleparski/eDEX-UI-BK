@@ -35,6 +35,14 @@ contextBridge.exposeInMainWorld('filesApi', Object.freeze({
     ipcRenderer.invoke('files:list', { sessionId, directoryPath, showHidden: showHidden === true })
   ),
   preview: (filePath) => ipcRenderer.invoke('files:preview', { filePath }),
+  open: (filePath) => ipcRenderer.invoke('files:open', { filePath }),
+  reveal: (filePath) => ipcRenderer.invoke('files:reveal', { filePath }),
+  rename: (filePath, name) => ipcRenderer.invoke('files:rename', { filePath, name }),
+  trash: (filePaths) => ipcRenderer.invoke('files:trash', { filePaths }),
+  transfer: (filePaths, destination, mode) => ipcRenderer.invoke('files:transfer', { filePaths, destination, mode }),
+  makeDirectory: (parentPath, name) => ipcRenderer.invoke('files:mkdir', { parentPath, name }),
+  chooseDirectory: (defaultPath = null) => ipcRenderer.invoke('files:choose-directory', { defaultPath }),
+  confirm: (options) => ipcRenderer.invoke('files:confirm', options),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   pathForDropSupported: typeof webUtils?.getPathForFile === 'function'
 }));
