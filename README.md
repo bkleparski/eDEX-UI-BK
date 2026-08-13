@@ -75,20 +75,6 @@ npm install          # also rebuilds node-pty for arm64
 npm start
 ```
 
-### Install the `ebartnet-ui` command
-
-Register a global command so you can launch the terminal from anywhere:
-
-```bash
-npm link             # inside the cloned repository
-ebartnet-ui          # launches the app
-```
-
-Remove it later with `npm unlink -g ebartnet-ui`.
-
-> Electron ships as a **dev dependency** (electron-builder requires it there), so the app
-> has to be installed from a clone rather than straight from the npm registry.
-
 ### Build a standalone `.app`
 
 ```bash
@@ -96,8 +82,15 @@ npm run dist
 ```
 
 Produces `dist/mac-arm64/EBARTNET-UI.app` plus a `.dmg` and `.zip` in `dist/`.
-The build is ad-hoc signed and not notarised — on first launch macOS will ask you to
+Drag the `.app` to `/Applications` and launch it like any other program — this is the
+intended way to use it day to day; `npm start` is for development.
+
+The build is ad-hoc signed and not notarised, so on first launch macOS will ask you to
 confirm an app from an unidentified developer.
+
+> **Keep a single copy.** Two builds of this app in different folders share one bundle
+> identifier, and macOS may then open whichever it finds first — which looks exactly like
+> your changes not taking effect.
 
 ## Keyboard shortcuts
 

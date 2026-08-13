@@ -29,19 +29,6 @@
   },
   "license": "UNLICENSED",
   "main": "src/main.js",
-  "bin": {
-    "ebartnet-ui": "bin/ebartnet-ui.js"
-  },
-  "files": [
-    "src/",
-    "bin/",
-    "resources/bin/",
-    "build/icon.icns",
-    "README.md"
-  ],
-  "os": [
-    "darwin"
-  ],
   "engines": {
     "node": ">=22"
   },
