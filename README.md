@@ -7,6 +7,7 @@
   <a href="package.json"><img src="https://img.shields.io/badge/electron-43.x-00e5ff?style=flat-square&labelColor=02080a" alt="Electron 43"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%E2%89%A522-00e5ff?style=flat-square&labelColor=02080a" alt="Node 22+"></a>
   <a href="#ai-assistant"><img src="https://img.shields.io/badge/AI-Ollama%20%7C%20LM%20Studio%20%7C%20OpenRouter-ff9f1c?style=flat-square&labelColor=02080a" alt="AI providers"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8ff8ff?style=flat-square&labelColor=02080a" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -188,5 +189,8 @@ GitSquared, itself inspired by the DEX-UI from *Tron: Legacy*. Built with
 
 ## License
 
-All rights reserved. The source is public for reference; it is not currently released
-under an open-source licence.
+[MIT](LICENSE) © 2026 Bartłomiej Kleparski — use it, fork it, build something of your own
+with it. Attribution is all that's asked.
+
+The bundled typefaces keep their own licences (SIL Open Font License), included next to the
+font files in `src/renderer/assets/fonts/`.
