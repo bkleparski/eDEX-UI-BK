@@ -356,6 +356,30 @@
           <button class="icon-action hud-label" id="settingsClose" type="button">CLOSE</button>
         </header>
         <div class="settings-body">
+          <section class="settings-section theme-section">
+            <h3 class="hud-label">WYGLĄD</h3>
+            <div class="theme-grid">
+              <div class="theme-field">
+                <span class="field-label hud-label" id="themeAccentLabel">AKCENT HUD</span>
+                <div class="theme-swatches" id="themeAccents" role="radiogroup" aria-labelledby="themeAccentLabel"></div>
+              </div>
+              <div class="theme-field">
+                <span class="field-label hud-label" id="themeColorLabel">KOLOR TERMINALA</span>
+                <div class="theme-swatches" id="themeTerminalColors" role="radiogroup" aria-labelledby="themeColorLabel"></div>
+              </div>
+              <label class="field-label hud-label" for="themeFont">KRÓJ TERMINALA</label>
+              <select class="hud-select" id="themeFont"></select>
+              <label class="field-label hud-label" for="themeFontSize">ROZMIAR</label>
+              <div class="theme-sizes" id="themeFontSize" role="radiogroup" aria-label="Rozmiar czcionki terminala"></div>
+            </div>
+            <div class="theme-preview" id="themePreview" aria-hidden="true">
+              <pre id="themePreviewText"></pre>
+            </div>
+            <div class="theme-footer">
+              <span class="theme-note hud-label" id="themeNote"></span>
+              <button class="text-action hud-label" id="themeReset" type="button">PRZYWRÓĆ DOMYŚLNE</button>
+            </div>
+          </section>
           <section class="settings-section">
             <h3 class="hud-label">LOCAL INFERENCE</h3>
             <div class="settings-grid">
@@ -432,8 +456,10 @@
 
     <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="theme.js"></script>
     <script src="renderer.js"></script>
     <script src="assistant-ui.js"></script>
     <script src="filesystem-ui.js"></script>
+    <script src="theme-ui.js"></script>
   </body>
 </html>

@@ -6,6 +6,56 @@
   font-display: swap;
 }
 
+/* Selectable terminal faces. Monaspace Neon NF stays the last resort in every
+   stack because it carries the Nerd Font glyphs the shell prompt relies on. */
+@font-face {
+  font-family: "Monaspace Argon";
+  src: url("assets/fonts/MonaspaceArgon-Regular.otf") format("opentype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Monaspace Xenon";
+  src: url("assets/fonts/MonaspaceXenon-Regular.otf") format("opentype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Monaspace Krypton";
+  src: url("assets/fonts/MonaspaceKrypton-Regular.otf") format("opentype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Fira Code";
+  src: url("assets/fonts/FiraCode-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("assets/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 @font-face {
   font-family: "Orbitron";
   src: url("assets/fonts/Orbitron-Variable.ttf") format("truetype-variations");
@@ -2250,6 +2300,109 @@ body.telemetry-panel-hidden .workspace:has(.files-panel:not([hidden])) {
   min-height: 0;
 }
 
+.theme-grid {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px 12px;
+}
+
+.theme-field {
+  display: contents;
+}
+
+.theme-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.theme-swatch {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .38);
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.theme-swatch__dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+}
+
+.theme-swatch:hover {
+  border-color: rgb(var(--cyan-rgb) / .7);
+}
+
+.theme-swatch[aria-checked="true"] {
+  border-color: var(--cyan-bright);
+  box-shadow: 0 0 6px rgb(var(--cyan-rgb) / .45);
+}
+
+.theme-swatch:focus-visible,
+.theme-size:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.theme-sizes {
+  display: flex;
+  gap: 6px;
+}
+
+.theme-size {
+  appearance: none;
+  flex: 1 1 0;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .38);
+  padding: 5px 0;
+  color: var(--text-primary);
+  background: transparent;
+  font-family: var(--font-terminal);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.theme-size[aria-checked="true"] {
+  border-color: var(--cyan-bright);
+  color: var(--text-bright);
+  background: rgb(var(--cyan-rgb) / .1);
+}
+
+.theme-preview {
+  margin-top: 11px;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .3);
+  padding: 11px 13px;
+  background: #02080a;
+  overflow-x: auto;
+}
+
+.theme-preview pre {
+  margin: 0;
+  line-height: 1.35;
+  white-space: pre;
+}
+
+.theme-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+}
+
+.theme-note {
+  color: var(--text-secondary);
+  font-size: 8px;
+  letter-spacing: .08em;
+}
+
 .file-toolbar {
   display: flex;
   flex: 0 0 auto;
@@ -2839,13 +2992,15 @@ body.files-resizing {
   display: none;
 }
 
-.settings-panel {
+/* Needs to outrank `.panel.hud-frame`, whose translucent --panel-bg would
+   otherwise let the terminal show through the dialog. */
+.settings-panel.panel.hud-frame {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(760px, 100%);
   max-height: min(760px, calc(100dvh - 48px));
   padding: 18px;
-  background: #02080a;
+  background-color: #02080a;
 }
 
 .settings-body {

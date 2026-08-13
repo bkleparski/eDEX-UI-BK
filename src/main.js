@@ -2346,6 +2346,21 @@ function createWindow() {
               await new Promise((r) => setTimeout(r, 900));
               evidence.trashed = !rowFor('beta.txt');
 
+              // 9. motyw: akcent przemalowuje tokeny HUD, kroj/rozmiar ida do xterm
+              const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+              window.themeApi.set({ accent: 'amber', terminalColor: 'mint', terminalFont: 'jetbrains', terminalFontSize: 14 });
+              await new Promise((r) => setTimeout(r, 250));
+              evidence.accentToken = cssVar('--cyan-rgb') === '255 176 60';
+              evidence.accentOnBody = document.body.dataset.themeAccent === 'amber';
+              const opts = window.__edexTerminalOptions();
+              evidence.xtermFont = String(opts.fontFamily).includes('JetBrains Mono');
+              evidence.xtermSize = opts.fontSize === 14;
+              evidence.xtermColor = String(opts.foreground).toLowerCase() === '#9fe8c4';
+              evidence.themePersisted = JSON.parse(localStorage.getItem('edex-ui-bk.theme.v1')).accent === 'amber';
+              window.themeApi.reset();
+              await new Promise((r) => setTimeout(r, 200));
+              evidence.themeReset = cssVar('--cyan-rgb') === '0 229 255';
+
               if (Date.now() - started > 25_000) throw new Error('files test timed out');
               resolve(evidence);
             };

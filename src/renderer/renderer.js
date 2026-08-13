@@ -88,6 +88,31 @@ const telemetryHistory = {
 const imagePreviewCache = new Map();
 let imagePreviewCacheChars = 0;
 
+// xterm.js paints to a canvas, so the appearance chosen in SETTINGS reaches it
+// through terminal options rather than CSS custom properties.
+function themedTerminalPalette(appearance = {}) {
+  const foreground = appearance.foreground || terminalTheme.foreground;
+  const cursor = appearance.cursor || terminalTheme.cursor;
+  return {
+    ...terminalTheme,
+    foreground,
+    cursor,
+    cursorAccent: terminalTheme.background,
+    selectionBackground: `${foreground}40`
+  };
+}
+
+function applyTerminalAppearance(appearance = window.themeApi?.appearance()) {
+  if (!appearance) return;
+  const palette = themedTerminalPalette(appearance);
+  for (const session of terminalSessions.values()) {
+    session.terminal.options.theme = palette;
+    session.terminal.options.fontFamily = appearance.fontFamily;
+    session.terminal.options.fontSize = appearance.fontSize;
+  }
+  fitActiveTerminal();
+}
+
 function numeric(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -1936,16 +1961,17 @@ async function createTerminalSession() {
   container.setAttribute('aria-label', `${label}, terminal zsh`);
   document.getElementById('terminalSessions').append(container);
 
+  const appearance = window.themeApi?.appearance() || {};
   const terminal = new Terminal({
     cursorBlink: true,
     convertEol: false,
-    fontFamily: '"Monaspace Neon NF", "SF Mono", Menlo, monospace',
-    fontSize: 12,
+    fontFamily: appearance.fontFamily || '"Monaspace Neon NF", "SF Mono", Menlo, monospace',
+    fontSize: appearance.fontSize || 12,
     fontWeight: '400',
     letterSpacing: 0.2,
     lineHeight: 1.16,
     scrollback: 10_000,
-    theme: terminalTheme
+    theme: themedTerminalPalette(appearance)
   });
 
   const fitAddon = new FitAddon.FitAddon();
@@ -2035,10 +2061,23 @@ initializeControls();
 initializeTTYContextMenu();
 initializeFileBrowser();
 initializeFileDrop();
+// Re-apply on every appearance change, and once fonts are ready so xterm
+// measures the real glyph widths instead of the fallback face.
+window.themeApi?.onChange((appearance) => applyTerminalAppearance(appearance));
+document.fonts?.ready?.then(() => applyTerminalAppearance()).catch(() => {});
 
 // Hooks used only by the automated file-manager check (EDEX_FILES_TEST).
 if (testMode === 'files') {
   window.__edexBrowse = (directoryPath) => browseDirectory(directoryPath);
+  window.__edexTerminalOptions = () => {
+    const session = terminalSessions.get(activeSessionId);
+    if (!session) return {};
+    return {
+      fontFamily: session.terminal.options.fontFamily,
+      fontSize: session.terminal.options.fontSize,
+      foreground: session.terminal.options.theme?.foreground
+    };
+  };
   window.__edexNewFolder = (name) => {
     const parent = currentDirectoryPath();
     if (!parent) return;
