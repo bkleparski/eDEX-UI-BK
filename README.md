@@ -116,6 +116,10 @@ Panes nest to any depth, and each one runs its own shell. Drag a border to rebal
 (no pane shrinks below 12%), and the focused pane is outlined once a tab holds more than one.
 Tabs and panes share a budget of 8 shells in total.
 
+A split tab branches in the bar — `01 ├ claude ├ codex` — with one chip per pane, named after
+the process it is running. Click a chip to focus that pane, right-click it to rename or close
+that pane alone.
+
 **HUD**
 
 | Shortcut | Action |
