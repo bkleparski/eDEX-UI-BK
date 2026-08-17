@@ -44,9 +44,14 @@ const imagePreviewCacheLimit = 24;
 const imagePreviewCacheTtlMs = 60_000;
 const imagePreviewCacheMaxChars = 48 * 1024 * 1024;
 const maxTerminalSessions = 8;
+// One entry per pty: a session is a *pane*, not a tab. Tabs own a layout tree
+// of panes, so several sessions can be visible side by side at once.
 const terminalSessions = new Map();
+const terminalTabs = new Map();
 let activeSessionId = null;
+let activeTabId = null;
 let nextSessionNumber = 1;
+let nextTabNumber = 1;
 let bootTimer;
 let bootActive = false;
 let smokeOutput = '';
@@ -1354,7 +1359,8 @@ function handleFileBrowserKeydown(event) {
     runFileOperation('WKLEJANIE…', () => window.filesApi.transfer(payload.paths, destination, payload.mode));
     return;
   }
-  if (event.metaKey && event.code === 'ArrowUp') {
+  // ⌥⌘↑ belongs to pane navigation, so the plain ⌘↑ shortcut must not swallow it.
+  if (event.metaKey && !event.altKey && event.code === 'ArrowUp') {
     event.preventDefault();
     const parentPath = lastFileBrowserResult?.parentPath;
     if (parentPath) {
@@ -1381,6 +1387,106 @@ function handleFileBrowserKeydown(event) {
 let terminalFitFrame = null;
 let terminalFocusRequested = false;
 
+// The layout tree lives in the DOM: a `.terminal-split` always holds exactly
+// two children (pane or nested split) separated by one `.terminal-splitter`,
+// so closing a pane collapses by hoisting the surviving sibling.
+function createSplitter(direction) {
+  const splitter = document.createElement('div');
+  splitter.className = 'terminal-splitter';
+  splitter.dataset.direction = direction;
+  splitter.setAttribute('role', 'separator');
+  splitter.setAttribute('aria-orientation', direction === 'row' ? 'vertical' : 'horizontal');
+  splitter.addEventListener('pointerdown', beginSplitterDrag);
+  return splitter;
+}
+
+function beginSplitterDrag(event) {
+  const splitter = event.currentTarget;
+  const split = splitter.parentElement;
+  const before = splitter.previousElementSibling;
+  const after = splitter.nextElementSibling;
+  if (!split || !before || !after) return;
+  const horizontal = split.dataset.direction === 'row';
+  const rect = split.getBoundingClientRect();
+  const total = horizontal ? rect.width : rect.height;
+  if (total <= 0) return;
+  event.preventDefault();
+  splitter.setPointerCapture(event.pointerId);
+  splitter.dataset.dragging = 'true';
+  const minRatio = 0.12;
+
+  const onMove = (moveEvent) => {
+    const offset = horizontal ? moveEvent.clientX - rect.left : moveEvent.clientY - rect.top;
+    const ratio = Math.min(1 - minRatio, Math.max(minRatio, offset / total));
+    before.style.flex = `${ratio} 1 0`;
+    after.style.flex = `${1 - ratio} 1 0`;
+  };
+  const onEnd = () => {
+    splitter.removeEventListener('pointermove', onMove);
+    splitter.removeEventListener('pointerup', onEnd);
+    splitter.removeEventListener('pointercancel', onEnd);
+    delete splitter.dataset.dragging;
+    document.body.dataset.paneResizeCount = String((Number(document.body.dataset.paneResizeCount) || 0) + 1);
+    fitActiveTerminal();
+  };
+  splitter.addEventListener('pointermove', onMove);
+  splitter.addEventListener('pointerup', onEnd);
+  splitter.addEventListener('pointercancel', onEnd);
+}
+
+// Replace `container` in place with a split holding it and the new pane.
+function splitPaneContainer(container, newContainer, direction) {
+  const parent = container.parentElement;
+  if (!parent) return;
+  const split = document.createElement('div');
+  split.className = 'terminal-split';
+  split.dataset.direction = direction;
+  split.style.flex = container.style.flex || '1 1 0';
+  parent.insertBefore(split, container);
+  container.style.flex = '1 1 0';
+  newContainer.style.flex = '1 1 0';
+  split.append(container, createSplitter(direction), newContainer);
+}
+
+function removePaneContainer(container) {
+  const parent = container.parentElement;
+  container.remove();
+  if (!parent || !parent.classList.contains('terminal-split')) return;
+  parent.querySelectorAll(':scope > .terminal-splitter').forEach((splitter) => splitter.remove());
+  const survivor = parent.firstElementChild;
+  if (!survivor) {
+    parent.remove();
+    return;
+  }
+  survivor.style.flex = parent.style.flex || '1 1 0';
+  parent.replaceWith(survivor);
+}
+
+function tabSessions(tabId) {
+  const tab = terminalTabs.get(tabId);
+  if (!tab) return [];
+  return [...tab.view.querySelectorAll('.terminal-instance')]
+    .map((container) => terminalSessions.get(container.dataset.sessionId))
+    .filter(Boolean);
+}
+
+function visibleSessions() {
+  return tabSessions(activeTabId);
+}
+
+// Every pane reflows on its own: one observer covers splits, splitter drags
+// and window resizes without a separate code path for each.
+const paneResizeObserver = new ResizeObserver(() => fitActiveTerminal());
+
+function fitSession(session) {
+  if (!session || !session.container.isConnected || session.container.offsetParent === null) return;
+  try {
+    session.fitAddon.fit();
+  } catch (error) {
+    console.warn('Terminal fit failed:', error);
+  }
+}
+
 function fitActiveTerminal({ focus = false } = {}) {
   terminalFocusRequested = terminalFocusRequested || focus;
   if (terminalFitFrame !== null) return;
@@ -1388,16 +1494,56 @@ function fitActiveTerminal({ focus = false } = {}) {
     terminalFitFrame = null;
     const shouldFocus = terminalFocusRequested;
     terminalFocusRequested = false;
+    for (const session of visibleSessions()) fitSession(session);
     const session = terminalSessions.get(activeSessionId);
-    if (!session) return;
-    session.fitAddon.fit();
-    if (shouldFocus) session.terminal.focus();
+    if (shouldFocus && session) session.terminal.focus();
   });
 }
 
 function focusTerminal() {
   const session = terminalSessions.get(activeSessionId);
   if (session) fitActiveTerminal({ focus: true });
+}
+
+// Geometric navigation beats tree walking here: it does the right thing for
+// any nesting depth, the same way ⌥⌘arrows behave in iTerm2.
+function focusPaneInDirection(direction) {
+  const current = terminalSessions.get(activeSessionId);
+  if (!current) return;
+  const source = current.container.getBoundingClientRect();
+  const sourceX = source.left + source.width / 2;
+  const sourceY = source.top + source.height / 2;
+  let best = null;
+  let bestScore = Infinity;
+  for (const session of visibleSessions()) {
+    if (session === current) continue;
+    const rect = session.container.getBoundingClientRect();
+    const deltaX = rect.left + rect.width / 2 - sourceX;
+    const deltaY = rect.top + rect.height / 2 - sourceY;
+    const along = direction === 'left' ? -deltaX
+      : direction === 'right' ? deltaX
+        : direction === 'up' ? -deltaY : deltaY;
+    if (along <= 1) continue;
+    const across = direction === 'left' || direction === 'right' ? Math.abs(deltaY) : Math.abs(deltaX);
+    const score = along + across * 2;
+    if (score < bestScore) {
+      bestScore = score;
+      best = session;
+    }
+  }
+  if (!best) return;
+  switchTerminalSession(best.id);
+  document.body.dataset.paneNavigationCount = String((Number(document.body.dataset.paneNavigationCount) || 0) + 1);
+}
+
+async function splitActivePane(direction) {
+  const session = terminalSessions.get(activeSessionId);
+  if (!session) return null;
+  return createTerminalSession({ tabId: session.tabId, splitFrom: session.id, direction });
+}
+
+function closeActivePane() {
+  if (activeSessionId) closeTTYSession(activeSessionId);
 }
 
 function hasFileDrag(dataTransfer) {
@@ -1580,7 +1726,7 @@ function recordSystemVisibilityState(visible) {
       panelVisible: getComputedStyle(document.getElementById('telemetryPanel')).display !== 'none',
       systemVisible: getComputedStyle(document.getElementById('systemGroup')).display !== 'none',
       terminalWidth: document.querySelector('.terminal-panel').getBoundingClientRect().width,
-      terminalScreenWidth: document.querySelector('.terminal-instance:not([hidden]) .xterm-screen')?.getBoundingClientRect().width || 0,
+      terminalScreenWidth: document.querySelector('.terminal-tab-view:not([hidden]) .terminal-instance.is-active-pane .xterm-screen')?.getBoundingClientRect().width || 0,
       visibleProcessCount: [...document.querySelectorAll('#processList .process-row')]
         .filter((row) => row.getClientRects().length > 0).length
     };
@@ -1635,7 +1781,32 @@ function initializeControls() {
   document.addEventListener('keydown', handleFileBrowserKeydown, true);
 
   document.addEventListener('keydown', (event) => {
-    if (bootActive || !event.metaKey || event.altKey || event.ctrlKey) return;
+    if (bootActive || !event.metaKey || event.ctrlKey) return;
+    // ⌥⌘arrows walk the pane grid of the current tab.
+    if (event.altKey) {
+      const direction = {
+        ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down'
+      }[event.code];
+      if (!direction) return;
+      event.preventDefault();
+      event.stopPropagation();
+      focusPaneInDirection(direction);
+      return;
+    }
+    // ⌘D splits side by side, ⇧⌘D stacks — same orientation as iTerm2.
+    if (event.code === 'KeyD') {
+      event.preventDefault();
+      event.stopPropagation();
+      splitActivePane(event.shiftKey ? 'column' : 'row')
+        .catch((error) => console.error('Pane split failed:', error));
+      return;
+    }
+    if (event.shiftKey && event.code === 'KeyW') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeActivePane();
+      return;
+    }
     if (event.shiftKey && event.code === 'KeyL') {
       event.preventDefault();
       event.stopPropagation();
@@ -1720,13 +1891,26 @@ function hideTTYRename() {
   document.body.dataset.ttyRenameOpen = 'false';
 }
 
+// A tab shows the identity of its focused pane, plus a pane count once split.
+function renderTabLabel(tabId) {
+  const tab = terminalTabs.get(tabId);
+  if (!tab) return;
+  const sessions = tabSessions(tabId);
+  const session = terminalSessions.get(tab.activePaneId) || sessions[0] || null;
+  const context = session ? session.manualName || session.autoContext || '~' : '~';
+  tab.button.querySelector('.tty-context').textContent = context;
+  tab.button.dataset.context = context;
+  tab.button.dataset.manualName = session?.manualName || '';
+  tab.button.dataset.sessionId = session?.id || '';
+  tab.button.dataset.paneCount = String(sessions.length);
+  const panes = tab.button.querySelector('.tty-panes');
+  panes.hidden = sessions.length < 2;
+  panes.textContent = sessions.length > 1 ? `×${sessions.length}` : '';
+  tab.button.title = session ? session.manualName || session.autoTitle || context : context;
+}
+
 function renderTerminalTabLabel(session) {
-  if (!session) return;
-  const context = session.manualName || session.autoContext || '~';
-  session.tab.querySelector('.tty-context').textContent = context;
-  session.tab.dataset.context = context;
-  session.tab.dataset.manualName = session.manualName || '';
-  session.tab.title = session.manualName || session.autoTitle || context;
+  if (session) renderTabLabel(session.tabId);
 }
 
 function showTTYContextMenu(sessionId, clientX, clientY) {
@@ -1795,7 +1979,9 @@ function closeTTYSession(sessionId) {
   const session = terminalSessions.get(sessionId);
   if (!session || session.closing) return;
   session.closing = true;
-  session.tab.disabled = true;
+  // Only the last pane takes its tab down with it, so keep the tab clickable
+  // while siblings survive.
+  if (tabSessions(session.tabId).length === 1) session.tab.disabled = true;
   document.body.dataset.ttyContextCloseCount = String(
     (Number(document.body.dataset.ttyContextCloseCount) || 0) + 1
   );
@@ -1852,15 +2038,23 @@ function switchTerminalSession(sessionId) {
   const sessionChanged = sessionId !== activeSessionId;
   const resumedFromBrowsing = sessionChanged && fileBrowserMode === 'browsing';
   activeSessionId = sessionId;
+  activeTabId = nextSession.tabId;
+  const activeTab = terminalTabs.get(activeTabId);
+  if (activeTab) activeTab.activePaneId = sessionId;
   if (sessionChanged) resumeLiveFileBrowser({ refresh: false });
   if (resumedFromBrowsing) document.body.dataset.fileBrowserTabResumeObserved = 'true';
-  for (const [id, session] of terminalSessions) {
-    const active = id === sessionId;
-    session.container.hidden = !active;
-    session.tab.classList.toggle('is-active', active);
-    session.tab.setAttribute('aria-selected', String(active));
-    session.tab.tabIndex = active ? 0 : -1;
+  for (const [tabId, tab] of terminalTabs) {
+    const active = tabId === activeTabId;
+    tab.view.hidden = !active;
+    tab.button.classList.toggle('is-active', active);
+    tab.button.setAttribute('aria-selected', String(active));
+    tab.button.tabIndex = active ? 0 : -1;
+    renderTabLabel(tabId);
   }
+  for (const session of terminalSessions.values()) {
+    session.container.classList.toggle('is-active-pane', session.id === sessionId);
+  }
+  document.body.dataset.activePaneId = sessionId;
   window.terminalApi.setActive(sessionId);
   updateShellStatus();
   refreshFileBrowser();
@@ -1870,17 +2064,19 @@ function switchTerminalSession(sessionId) {
 function handleTerminalExit(sessionId) {
   const session = terminalSessions.get(sessionId);
   if (!session) return;
-  const sessionOrder = [...terminalSessions.keys()];
-  const exitIndex = sessionOrder.indexOf(sessionId);
+  const tabId = session.tabId;
+  const tabOrder = [...terminalTabs.keys()];
+  const tabIndex = tabOrder.indexOf(tabId);
+  const paneOrder = tabSessions(tabId);
+  const paneIndex = paneOrder.indexOf(session);
   const wasActive = sessionId === activeSessionId;
 
   if (ttyContextSessionId === sessionId) hideTTYContextMenu();
   if (ttyRenameSessionId === sessionId) hideTTYRename();
 
   terminalSessions.delete(sessionId);
-  session.tab.remove();
   session.terminal.dispose();
-  session.container.remove();
+  removePaneContainer(session.container);
   document.body.dataset.terminalExitCount = String((Number(document.body.dataset.terminalExitCount) || 0) + 1);
 
   if (isSmokeTest && !smokeCompleted) {
@@ -1890,14 +2086,31 @@ function handleTerminalExit(sessionId) {
   }
   if (rendererShuttingDown) return;
 
-  const remainingIds = [...terminalSessions.keys()];
-  if (remainingIds.length > 0) {
-    if (wasActive) switchTerminalSession(remainingIds[Math.min(exitIndex, remainingIds.length - 1)]);
+  // A tab survives as long as one of its panes is left.
+  const remainingPanes = tabSessions(tabId);
+  if (remainingPanes.length > 0) {
+    const fallback = remainingPanes[Math.min(paneIndex, remainingPanes.length - 1)];
+    const tab = terminalTabs.get(tabId);
+    if (tab && !terminalSessions.has(tab.activePaneId)) tab.activePaneId = fallback.id;
+    if (wasActive) switchTerminalSession(fallback.id);
+    else {
+      renderTabLabel(tabId);
+      refreshFileBrowser();
+    }
+    fitActiveTerminal();
+    return;
+  }
+
+  removeTerminalTab(tabId);
+  const remainingTabs = [...terminalTabs.keys()];
+  if (remainingTabs.length > 0) {
+    if (wasActive) switchTerminalTab(remainingTabs[Math.min(tabIndex, remainingTabs.length - 1)]);
     else refreshFileBrowser();
     return;
   }
 
   activeSessionId = null;
+  activeTabId = null;
   updateShellStatus();
   renderFileBrowser(null);
   document.body.dataset.terminalRespawnCount = String((Number(document.body.dataset.terminalRespawnCount) || 0) + 1);
@@ -1913,39 +2126,79 @@ function updateTerminalMetadata(updates) {
     session.autoContext = context;
     session.autoTitle = metadata.idle ? metadata.cwd || metadata.command || context : metadata.command || context;
     renderTerminalTabLabel(session);
-    session.tab.dataset.processName = metadata.processName || '';
+    if (terminalTabs.get(session.tabId)?.activePaneId === session.id) {
+      session.tab.dataset.processName = metadata.processName || '';
+    }
     if (metadata.processName === 'top') document.body.dataset.ttyTopObserved = 'true';
   });
 }
 
-function createTerminalTab(sessionId, sessionNumber) {
-  const tab = document.createElement('button');
-  tab.className = 'tty-tab hud-label';
-  tab.type = 'button';
-  tab.id = `${sessionId}-tab`;
-  tab.dataset.sessionId = sessionId;
-  tab.setAttribute('role', 'tab');
-  tab.setAttribute('aria-controls', `${sessionId}-panel`);
+function createTerminalTab() {
+  const tabNumber = nextTabNumber;
+  nextTabNumber += 1;
+  const tabId = `tab-${String(tabNumber).padStart(2, '0')}`;
+
+  const button = document.createElement('button');
+  button.className = 'tty-tab hud-label';
+  button.type = 'button';
+  button.id = `${tabId}-tab`;
+  button.dataset.tabId = tabId;
+  button.setAttribute('role', 'tab');
+  button.setAttribute('aria-controls', `${tabId}-view`);
   const index = document.createElement('span');
   index.className = 'tty-index';
-  index.textContent = String(sessionNumber).padStart(2, '0');
+  index.textContent = String(tabNumber).padStart(2, '0');
   const context = document.createElement('span');
   context.className = 'tty-context';
   context.textContent = '~';
-  tab.append(index, context);
-  tab.addEventListener('click', () => switchTerminalSession(sessionId));
-  tab.addEventListener('contextmenu', (event) => {
+  const panes = document.createElement('span');
+  panes.className = 'tty-panes';
+  panes.hidden = true;
+  button.append(index, context, panes);
+  button.addEventListener('click', () => switchTerminalTab(tabId));
+  button.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showTTYContextMenu(sessionId, event.clientX, event.clientY);
+    const tab = terminalTabs.get(tabId);
+    if (tab?.activePaneId) showTTYContextMenu(tab.activePaneId, event.clientX, event.clientY);
   });
-  document.getElementById('ttyTabs').append(tab);
+  document.getElementById('ttyTabs').append(button);
+
+  const view = document.createElement('div');
+  view.className = 'terminal-tab-view';
+  view.id = `${tabId}-view`;
+  view.dataset.tabId = tabId;
+  view.setAttribute('role', 'tabpanel');
+  view.setAttribute('aria-labelledby', `${tabId}-tab`);
+  view.hidden = true;
+  document.getElementById('terminalSessions').append(view);
+
+  const tab = { id: tabId, number: tabNumber, button, view, activePaneId: null };
+  terminalTabs.set(tabId, tab);
   return tab;
 }
 
-async function createTerminalSession() {
+function switchTerminalTab(tabId) {
+  const tab = terminalTabs.get(tabId);
+  if (!tab) return;
+  const paneId = terminalSessions.has(tab.activePaneId)
+    ? tab.activePaneId
+    : tabSessions(tabId)[0]?.id;
+  if (paneId) switchTerminalSession(paneId);
+}
+
+function removeTerminalTab(tabId) {
+  const tab = terminalTabs.get(tabId);
+  if (!tab) return;
+  tab.button.remove();
+  tab.view.remove();
+  terminalTabs.delete(tabId);
+  if (activeTabId === tabId) activeTabId = null;
+}
+
+async function createTerminalSession({ tabId = null, splitFrom = null, direction = 'row' } = {}) {
   if (terminalSessions.size >= maxTerminalSessions) {
-    terminalSessions.get(activeSessionId)?.terminal.write('\r\n[TTY LIMIT: 8]\r\n');
+    terminalSessions.get(activeSessionId)?.terminal.write(`\r\n[TTY LIMIT: ${maxTerminalSessions}]\r\n`);
     return null;
   }
 
@@ -1953,13 +2206,19 @@ async function createTerminalSession() {
   nextSessionNumber += 1;
   const sessionId = `tty-${String(sessionNumber).padStart(2, '0')}`;
   const label = `TTY ${String(sessionNumber).padStart(2, '0')}`;
+  const origin = splitFrom ? terminalSessions.get(splitFrom) : null;
+  const tab = origin ? terminalTabs.get(origin.tabId) : (tabId && terminalTabs.get(tabId)) || createTerminalTab();
+  if (!tab) return null;
+
   const container = document.createElement('div');
   container.className = 'terminal-instance';
   container.id = `${sessionId}-panel`;
-  container.setAttribute('role', 'tabpanel');
-  container.setAttribute('aria-labelledby', `${sessionId}-tab`);
+  container.dataset.sessionId = sessionId;
+  container.style.flex = '1 1 0';
+  container.setAttribute('role', 'group');
   container.setAttribute('aria-label', `${label}, terminal zsh`);
-  document.getElementById('terminalSessions').append(container);
+  if (origin) splitPaneContainer(origin.container, container, direction);
+  else tab.view.append(container);
 
   const appearance = window.themeApi?.appearance() || {};
   const terminal = new Terminal({
@@ -1980,10 +2239,11 @@ async function createTerminalSession() {
   fitAddon.fit();
   const session = {
     id: sessionId,
+    tabId: tab.id,
     terminal,
     fitAddon,
     container,
-    tab: createTerminalTab(sessionId, sessionNumber),
+    tab: tab.button,
     autoContext: '~',
     autoTitle: '~',
     manualName: null,
@@ -1992,6 +2252,14 @@ async function createTerminalSession() {
     failed: false
   };
   terminalSessions.set(sessionId, session);
+  paneResizeObserver.observe(container);
+  container.addEventListener('pointerdown', () => {
+    if (activeSessionId !== sessionId) switchTerminalSession(sessionId);
+  }, true);
+  terminal.textarea?.addEventListener('focus', () => {
+    if (activeSessionId !== sessionId) switchTerminalSession(sessionId);
+  });
+  renderTabLabel(tab.id);
   terminal.onData((data) => {
     playInputSound(data);
     window.terminalApi.write(sessionId, data);
@@ -2051,6 +2319,7 @@ async function initializeTerminal() {
   window.addEventListener('beforeunload', () => {
     rendererShuttingDown = true;
     resizeObserver.disconnect();
+    paneResizeObserver.disconnect();
   }, { once: true });
   await createTerminalSession();
 }

@@ -808,7 +808,7 @@ body.system-panel-hidden.network-panel-hidden .workspace {
 }
 
 .terminal-sessions,
-.terminal-instance,
+.terminal-tab-view,
 .xterm,
 .xterm-screen,
 .xterm-viewport {
@@ -816,8 +816,91 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   height: 100%;
 }
 
+/* A tab view holds a binary split tree; panes and nested splits share the
+   space through flex-grow, and each splitter drags the ratio of its pair. */
+.terminal-tab-view,
+.terminal-split {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-split[data-direction='row'] {
+  flex-direction: row;
+}
+
+.terminal-split[data-direction='column'] {
+  flex-direction: column;
+}
+
+.terminal-instance {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-tab-view[hidden],
 .terminal-instance[hidden] {
   display: none;
+}
+
+.terminal-splitter {
+  flex: 0 0 9px;
+  position: relative;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  touch-action: none;
+}
+
+.terminal-splitter::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: rgb(var(--cyan-rgb) / .22);
+  transition: background 120ms ease;
+}
+
+.terminal-splitter[data-direction='row'] {
+  cursor: col-resize;
+}
+
+.terminal-splitter[data-direction='row']::before {
+  width: 1px;
+  height: 100%;
+}
+
+.terminal-splitter[data-direction='column'] {
+  cursor: row-resize;
+}
+
+.terminal-splitter[data-direction='column']::before {
+  width: 100%;
+  height: 1px;
+}
+
+.terminal-splitter:hover::before,
+.terminal-splitter[data-dragging]::before {
+  background: rgb(var(--cyan-rgb) / .75);
+  box-shadow: 0 0 8px rgb(var(--cyan-rgb) / .5);
+}
+
+/* Only mark the focused pane once the tab is actually split — a lone pane
+   needs no border to tell it apart. */
+.terminal-instance.is-active-pane:not(:only-child)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid rgb(var(--cyan-rgb) / .45);
+  box-shadow: inset 0 0 12px rgb(var(--cyan-rgb) / .12);
+}
+
+.tty-panes {
+  margin-left: 4px;
+  opacity: .7;
 }
 
 .xterm {

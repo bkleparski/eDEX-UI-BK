@@ -23,7 +23,8 @@ const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
 const isAssistantVisualTest = process.env.EDEX_ASSISTANT_VISUAL_TEST === '1';
 const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
 const isFilesTest = process.env.EDEX_FILES_TEST === '1';
-const isAutomatedTest = isSmokeTest || isVisualTest || isAssistantVisualTest || isFilesTest;
+const isPanesTest = process.env.EDEX_PANES_TEST === '1';
+const isAutomatedTest = isSmokeTest || isVisualTest || isAssistantVisualTest || isFilesTest || isPanesTest;
 const visualTestWidth = Math.max(960, Number.parseInt(process.env.EDEX_VISUAL_WIDTH, 10) || 1440);
 const visualTestHeight = Math.max(640, Number.parseInt(process.env.EDEX_VISUAL_HEIGHT, 10) || 900);
 const minimumVisualTerminalWidthWithFilesPanel = visualTestWidth < 1200 ? 260 : 350;
@@ -1202,7 +1203,7 @@ function createWindow() {
   window.loadFile(
     path.join(__dirname, 'renderer', 'index.html'),
     isAutomatedTest
-      ? { query: { test: isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : isFilesTest ? 'files' : 'visual' } }
+      ? { query: { test: isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : isFilesTest ? 'files' : isPanesTest ? 'panes' : 'visual' } }
       : undefined
   );
 
@@ -2373,6 +2374,127 @@ function createWindow() {
           process.exitCode = 0;
         } catch (error) {
           console.error(`File manager test failed: ${error.message}`);
+          process.exitCode = 1;
+        }
+        app.quit();
+      }, 3_500);
+    });
+  }
+
+  if (isPanesTest) {
+    window.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          // Captured while the three-pane layout is still on screen — the run
+          // tears it down again a step later.
+          const screenshotPath = (async () => {
+            for (let attempt = 0; attempt < 80; attempt += 1) {
+              const ready = await window.webContents.executeJavaScript(
+                "document.body.dataset.paneScreenshotReady === 'true'"
+              );
+              if (ready) {
+                const target = path.join(os.tmpdir(), 'edex-ui-bk-split-panes.png');
+                fs.writeFileSync(target, (await window.webContents.capturePage()).toPNG());
+                return target;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 200));
+            }
+            return null;
+          })();
+
+          const report = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+            const started = Date.now();
+            const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+            const press = (code, modifiers = {}) => document.dispatchEvent(new KeyboardEvent('keydown', {
+              code, metaKey: true, bubbles: true, cancelable: true, ...modifiers
+            }));
+            const view = () => document.querySelector('.terminal-tab-view:not([hidden])');
+            const panes = () => [...view().querySelectorAll('.terminal-instance')];
+            const tabs = () => [...document.querySelectorAll('#ttyTabs .tty-tab')];
+            const activePane = () => document.body.dataset.activePaneId;
+            const evidence = {};
+            const step = async () => {
+              evidence.startsWithOnePane = panes().length === 1 && tabs().length === 1;
+
+              // 1. cmd+D splits the pane side by side inside the same tab
+              press('KeyD');
+              await wait(900);
+              evidence.splitAddsPane = panes().length === 2 && tabs().length === 1;
+              evidence.splitIsHorizontal = view().querySelector('.terminal-split')?.dataset.direction === 'row';
+              evidence.splitHasSplitter = view().querySelectorAll('.terminal-splitter').length === 1;
+              evidence.newPaneFocused = activePane() === panes()[1].dataset.sessionId;
+              evidence.tabCountsPanes = tabs()[0].dataset.paneCount === '2';
+
+              // 2. shift+cmd+D stacks the focused pane, nesting a second split
+              press('KeyD', { shiftKey: true });
+              await wait(900);
+              evidence.stackAddsPane = panes().length === 3;
+              evidence.nestedSplitIsVertical = Boolean(
+                view().querySelector('.terminal-split[data-direction="row"] .terminal-split[data-direction="column"]')
+              );
+
+              // 3. alt+cmd+arrows walk the pane grid
+              const leftPaneId = panes()[0].dataset.sessionId;
+              press('ArrowLeft', { altKey: true });
+              await wait(200);
+              evidence.navigatesLeft = activePane() === leftPaneId;
+              press('ArrowRight', { altKey: true });
+              await wait(200);
+              evidence.navigatesBack = activePane() !== leftPaneId;
+
+              // 4. dragging a splitter re-weights the pair
+              const splitter = view().querySelector('.terminal-splitter[data-direction="row"]');
+              const split = splitter.parentElement;
+              const rect = split.getBoundingClientRect();
+              const before = splitter.previousElementSibling;
+              splitter.setPointerCapture = () => {};
+              splitter.releasePointerCapture = () => {};
+              splitter.dispatchEvent(new PointerEvent('pointerdown', {
+                bubbles: true, cancelable: true, pointerId: 1,
+                clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2
+              }));
+              splitter.dispatchEvent(new PointerEvent('pointermove', {
+                bubbles: true, pointerId: 1,
+                clientX: rect.left + rect.width * 0.3, clientY: rect.top + rect.height / 2
+              }));
+              splitter.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+              await wait(200);
+              evidence.splitterResizes = Math.abs(Number.parseFloat(before.style.flex) - 0.3) < 0.06;
+              evidence.splitterCounted = document.body.dataset.paneResizeCount === '1';
+
+              document.body.dataset.paneScreenshotReady = 'true';
+              await wait(400);
+
+              // 5. shift+cmd+W closes the pane and the tree collapses
+              press('KeyW', { shiftKey: true });
+              await wait(1_200);
+              evidence.closeRemovesPane = panes().length === 2 && tabs().length === 1;
+              evidence.treeCollapsed = view().querySelectorAll('.terminal-split').length === 1;
+              evidence.focusMovedToSibling = Boolean(terminalPaneAlive(activePane()));
+
+              // 6. cmd+T still opens a separate tab, hiding the split view
+              press('KeyT');
+              await wait(900);
+              evidence.newTabOpens = tabs().length === 2 && panes().length === 1;
+              evidence.previousTabHidden = document.querySelectorAll('.terminal-tab-view[hidden]').length === 1;
+
+              if (Date.now() - started > 25_000) throw new Error('panes test timed out');
+              resolve(evidence);
+            };
+            function terminalPaneAlive(id) {
+              return id && document.querySelector('.terminal-instance[data-session-id="' + id + '"].is-active-pane');
+            }
+            step().catch(reject);
+          })`);
+          console.log(`Split panes diagnostics: ${JSON.stringify(report)}`);
+          const failures = Object.entries(report).filter(([, value]) => value !== true).map(([key]) => key);
+          if (failures.length) throw new Error(`failed checks: ${failures.join(', ')}`);
+          const capturedPath = await screenshotPath;
+          if (capturedPath) console.log(`Split panes screenshot: ${capturedPath}`);
+          console.log('Split panes test passed: split, stack, navigate, resize, close and tabs all work.');
+          process.exitCode = 0;
+        } catch (error) {
+          console.error(`Split panes test failed: ${error.message}`);
           process.exitCode = 1;
         }
         app.quit();
