@@ -898,9 +898,59 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   box-shadow: inset 0 0 12px rgb(var(--cyan-rgb) / .12);
 }
 
-.tty-panes {
-  margin-left: 4px;
-  opacity: .7;
+.tty-tab-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tty-pane-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 140px;
+  border: 1px solid transparent;
+  padding: 2px 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-family: var(--font-terminal);
+  font-size: 9px;
+  letter-spacing: .04em;
+  text-transform: none;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.tty-pane-branch {
+  color: rgb(var(--cyan-rgb) / .45);
+}
+
+.tty-pane-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tty-pane-chip:hover,
+.tty-pane-chip:focus-visible {
+  border-color: rgb(var(--cyan-rgb) / .4);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.tty-pane-chip.is-active {
+  border-color: var(--cyan);
+  color: var(--text-bright);
+  background: rgb(var(--cyan-rgb) / .08);
+  text-shadow: var(--glow-label);
+}
+
+.tty-pane-chip[disabled] {
+  opacity: .35;
+  cursor: default;
 }
 
 .xterm {

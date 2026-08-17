@@ -2492,14 +2492,35 @@ function createWindow() {
               document.body.dataset.paneScreenshotReady = 'true';
               await wait(400);
 
-              // 5. shift+cmd+W closes the pane and the tree collapses
+              // 5. every pane owns a chip in the bar, and its context menu
+              //    closes that pane alone — not the whole tab
+              const chips = () => [...document.querySelectorAll('.tty-tab-group .tty-pane-chip')];
+              evidence.chipPerPane = chips().length === 3;
+              evidence.chipsCarryNames = chips().every(
+                (chip) => chip.querySelector('.tty-pane-name').textContent.trim().length > 0
+              );
+              evidence.tabKeepsOnlyNumber = document.querySelector('#ttyTabs .tty-tab .tty-context').hidden;
+              const victim = chips().find((chip) => !chip.classList.contains('is-active'));
+              const victimId = victim.dataset.sessionId;
+              victim.dispatchEvent(new MouseEvent('contextmenu', {
+                bubbles: true, cancelable: true, clientX: 300, clientY: 140
+              }));
+              evidence.chipMenuTargetsItsPane = document.body.dataset.ttyContextSessionId === victimId;
+              document.querySelector('#ttyContextMenu [data-action="close"]').click();
+              await wait(1_400);
+              evidence.chipCloseRemovesOnlyThatPane = panes().length === 2
+                && !panes().some((pane) => pane.dataset.sessionId === victimId)
+                && tabs().length === 1;
+
+              // 6. shift+cmd+W closes the focused pane and the tree collapses
               press('KeyW', { shiftKey: true });
-              await wait(1_200);
-              evidence.closeRemovesPane = panes().length === 2 && tabs().length === 1;
-              evidence.treeCollapsed = view().querySelectorAll('.terminal-split').length === 1;
+              await wait(1_400);
+              evidence.closeRemovesPane = panes().length === 1 && tabs().length === 1;
+              evidence.treeCollapsed = view().querySelectorAll('.terminal-split').length === 0;
+              evidence.chipsGoneWhenUnsplit = chips().length === 0;
               evidence.focusMovedToSibling = Boolean(terminalPaneAlive(activePane()));
 
-              // 6. cmd+T still opens a separate tab, hiding the split view
+              // 7. cmd+T still opens a separate tab, hiding the split view
               press('KeyT');
               await wait(900);
               evidence.newTabOpens = tabs().length === 2 && panes().length === 1;

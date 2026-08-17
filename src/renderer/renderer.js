@@ -1891,22 +1891,77 @@ function hideTTYRename() {
   document.body.dataset.ttyRenameOpen = 'false';
 }
 
-// A tab shows the identity of its focused pane, plus a pane count once split.
+function paneLabel(session) {
+  return session.manualName || session.autoContext || '~';
+}
+
+// An unsplit tab carries the name itself; a split one hands the names over to
+// its pane chips and keeps only the number.
 function renderTabLabel(tabId) {
   const tab = terminalTabs.get(tabId);
   if (!tab) return;
   const sessions = tabSessions(tabId);
   const session = terminalSessions.get(tab.activePaneId) || sessions[0] || null;
-  const context = session ? session.manualName || session.autoContext || '~' : '~';
-  tab.button.querySelector('.tty-context').textContent = context;
+  const split = sessions.length > 1;
+  const context = session ? paneLabel(session) : '~';
+  const contextElement = tab.button.querySelector('.tty-context');
+  contextElement.textContent = context;
+  contextElement.hidden = split;
   tab.button.dataset.context = context;
   tab.button.dataset.manualName = session?.manualName || '';
   tab.button.dataset.sessionId = session?.id || '';
   tab.button.dataset.paneCount = String(sessions.length);
-  const panes = tab.button.querySelector('.tty-panes');
-  panes.hidden = sessions.length < 2;
-  panes.textContent = sessions.length > 1 ? `×${sessions.length}` : '';
   tab.button.title = session ? session.manualName || session.autoTitle || context : context;
+  renderPaneChips(tab, sessions, split);
+}
+
+function createPaneChip(sessionId) {
+  const chip = document.createElement('button');
+  chip.className = 'tty-pane-chip hud-label';
+  chip.type = 'button';
+  chip.dataset.sessionId = sessionId;
+  const branch = document.createElement('span');
+  branch.className = 'tty-pane-branch';
+  branch.textContent = '├';
+  branch.setAttribute('aria-hidden', 'true');
+  const name = document.createElement('span');
+  name.className = 'tty-pane-name';
+  chip.append(branch, name);
+  chip.addEventListener('click', () => switchTerminalSession(sessionId));
+  chip.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showTTYContextMenu(sessionId, event.clientX, event.clientY);
+  });
+  return chip;
+}
+
+// Chips are reused across metadata ticks — rebuilding them every second would
+// drop the focus ring mid-click.
+function renderPaneChips(tab, sessions, split) {
+  const existing = new Map([...tab.group.querySelectorAll('.tty-pane-chip')]
+    .map((chip) => [chip.dataset.sessionId, chip]));
+  if (!split) {
+    existing.forEach((chip) => chip.remove());
+    sessions.forEach((session) => { session.chip = null; });
+    return;
+  }
+  let previous = tab.button;
+  for (const session of sessions) {
+    let chip = existing.get(session.id);
+    if (chip) existing.delete(session.id);
+    else chip = createPaneChip(session.id);
+    if (previous.nextElementSibling !== chip) previous.after(chip);
+    previous = chip;
+    const label = paneLabel(session);
+    chip.querySelector('.tty-pane-name').textContent = label;
+    chip.title = session.manualName || session.autoTitle || label;
+    chip.dataset.manualName = session.manualName || '';
+    chip.classList.toggle('is-active', session.id === tab.activePaneId);
+    chip.setAttribute('aria-pressed', String(session.id === tab.activePaneId));
+    session.chip = chip;
+  }
+  existing.forEach((chip) => chip.remove());
 }
 
 function renderTerminalTabLabel(session) {
@@ -1936,7 +1991,7 @@ function beginTTYRename(sessionId) {
   ttyRenameSessionId = sessionId;
   const popover = document.getElementById('ttyRenamePopover');
   const input = document.getElementById('ttyRenameInput');
-  const tabRect = session.tab.getBoundingClientRect();
+  const tabRect = (session.chip || session.tab).getBoundingClientRect();
   input.value = (session.manualName || session.autoContext || '').slice(0, 24);
   popover.hidden = false;
   popover.setAttribute('aria-hidden', 'false');
@@ -1980,8 +2035,9 @@ function closeTTYSession(sessionId) {
   if (!session || session.closing) return;
   session.closing = true;
   // Only the last pane takes its tab down with it, so keep the tab clickable
-  // while siblings survive.
+  // while siblings survive — the closing pane's own chip is what greys out.
   if (tabSessions(session.tabId).length === 1) session.tab.disabled = true;
+  else if (session.chip) session.chip.disabled = true;
   document.body.dataset.ttyContextCloseCount = String(
     (Number(document.body.dataset.ttyContextCloseCount) || 0) + 1
   );
@@ -2151,10 +2207,7 @@ function createTerminalTab() {
   const context = document.createElement('span');
   context.className = 'tty-context';
   context.textContent = '~';
-  const panes = document.createElement('span');
-  panes.className = 'tty-panes';
-  panes.hidden = true;
-  button.append(index, context, panes);
+  button.append(index, context);
   button.addEventListener('click', () => switchTerminalTab(tabId));
   button.addEventListener('contextmenu', (event) => {
     event.preventDefault();
@@ -2162,7 +2215,14 @@ function createTerminalTab() {
     const tab = terminalTabs.get(tabId);
     if (tab?.activePaneId) showTTYContextMenu(tab.activePaneId, event.clientX, event.clientY);
   });
-  document.getElementById('ttyTabs').append(button);
+
+  // Once a tab is split, every pane gets its own chip in the bar so it can be
+  // focused, renamed and closed on its own.
+  const group = document.createElement('div');
+  group.className = 'tty-tab-group';
+  group.dataset.tabId = tabId;
+  group.append(button);
+  document.getElementById('ttyTabs').append(group);
 
   const view = document.createElement('div');
   view.className = 'terminal-tab-view';
@@ -2173,7 +2233,7 @@ function createTerminalTab() {
   view.hidden = true;
   document.getElementById('terminalSessions').append(view);
 
-  const tab = { id: tabId, number: tabNumber, button, view, activePaneId: null };
+  const tab = { id: tabId, number: tabNumber, button, group, view, activePaneId: null };
   terminalTabs.set(tabId, tab);
   return tab;
 }
@@ -2190,7 +2250,7 @@ function switchTerminalTab(tabId) {
 function removeTerminalTab(tabId) {
   const tab = terminalTabs.get(tabId);
   if (!tab) return;
-  tab.button.remove();
+  tab.group.remove();
   tab.view.remove();
   terminalTabs.delete(tabId);
   if (activeTabId === tabId) activeTabId = null;
