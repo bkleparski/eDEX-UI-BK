@@ -12,8 +12,8 @@
 
 <p align="center">
   <b>A real terminal that looks like it fell out of the Grid.</b><br>
-  Native Apple Silicon, a genuine zsh PTY, live system telemetry, a file browser<br>
-  and an AI assistant that runs on your own machine.
+  Native Apple Silicon, a genuine zsh PTY with iTerm2-style split panes, live system<br>
+  telemetry, a file manager and an AI assistant that runs on your own machine.
 </p>
 
 <p align="center">
@@ -41,6 +41,7 @@ and *Tron: Legacy*; none of the original source was copied.
 **Terminal that is actually a terminal**
 - Real `zsh` login shell through `node-pty`, rebuilt for `arm64`
 - Multiple tabs (`⌘T`), rename, close, automatic respawn when a shell exits
+- **Split panes inside a tab** (`⌘D` / `⇧⌘D`), nested to any depth, each pane its own shell
 - Drag files from Finder or the built-in browser straight into the prompt — paths are shell-quoted for you
 
 **Live telemetry, not decoration**
@@ -49,10 +50,19 @@ and *Tron: Legacy*; none of the original source was copied.
 - Disk usage, network throughput, LAN + public IPv4, latency, battery
 - Top processes sorted by CPU, refreshed continuously
 
-**File browser with three views**
+**A file manager, not just a listing**
 - `LIST` · `DETAILS` (size + modified date) · `TILES` (icon grid)
 - Follows the terminal's working directory live, or detach and browse freely
-- Hover preview for images, dotfile toggle, drag-and-drop into the shell
+- Finder semantics: click selects, double-click opens; `⌘`-click and `⇧`-click extend the selection
+- Context menu with rename, copy, move, new folder, copy path, reveal in Finder
+- Deletions go to the **Trash**, and directories or batches ask for confirmation first
+- Column sorting, `⌘F` filter, `⌘C`/`⌘V`, hover preview for images, dotfile toggle
+
+**Themes you control from SETTINGS**
+- Five HUD accents repaint the entire interface — every panel, border and glow
+- Terminal colour, typeface and size are set separately, with a live preview
+- Seven bundled monospace faces, all with Nerd Font glyphs kept as fallback
+- Choices persist between launches; one button restores the defaults
 
 **AI assistant, local-first**
 - Chat panel docked next to the terminal, resizable and persistent
@@ -60,6 +70,16 @@ and *Tron: Legacy*; none of the original source was copied.
 - Models are discovered dynamically from each provider's catalogue
 - Optional web search through the Brave Search API
 - `ai` and `search` commands available directly inside the shell
+
+<p align="center">
+  <img src="docs/assets/screenshot-panes.png" alt="One tab split into three panes, each running its own zsh" width="100%">
+</p>
+<p align="center"><i>One tab, three shells: <code>⌘D</code> splits side by side, <code>⇧⌘D</code> stacks.</i></p>
+
+<p align="center">
+  <img src="docs/assets/screenshot-themes.png" alt="WYGLĄD section: HUD accent, terminal colour, typeface and size" width="72%">
+</p>
+<p align="center"><i>SETTINGS → WYGLĄD. The interface labels are in Polish; the shell is yours.</i></p>
 
 <p align="center">
   <img src="docs/assets/screenshot-assistant.png" alt="AI assistant panel docked next to the terminal" width="100%">
@@ -82,15 +102,43 @@ Requires macOS on Apple Silicon (arm64).
 
 ## Keyboard shortcuts
 
+**Terminal**
+
+| Shortcut | Action |
+| --- | --- |
+| `⌘T` | New terminal tab |
+| `⌘D` | Split the focused pane side by side |
+| `⇧⌘D` | Split the focused pane top and bottom |
+| `⌥⌘←↑→↓` | Move focus to the neighbouring pane |
+| `⇧⌘W` | Close the focused pane (the last one closes its tab) |
+
+Panes nest to any depth, and each one runs its own shell. Drag a border to rebalance a pair
+(no pane shrinks below 12%), and the focused pane is outlined once a tab holds more than one.
+Tabs and panes share a budget of 8 shells in total.
+
+**HUD**
+
 | Shortcut | Action |
 | --- | --- |
 | `⌘1` | Toggle the SYSTEM telemetry column |
 | `⌘2` | Toggle the FILE SYSTEM panel |
 | `⌘3` | Toggle the AI ASSISTANT panel |
-| `⌘T` | New terminal tab |
-| `⇧⌘.` | Show/hide dotfiles in the browser |
 | `⇧⌘L` | Toggle the scanline overlay |
 | `⇧⌘S` | Toggle keystroke sounds |
+
+**File browser** (while the panel is open)
+
+| Shortcut | Action |
+| --- | --- |
+| `⌘F` | Filter the listing |
+| `⌘A` | Select everything |
+| `⌘C` / `⌘V` | Copy the selection / paste it here |
+| `⌥⌘C` | Copy the full paths to the clipboard |
+| `⇧⌘N` | New folder |
+| `⌘↑` | Go to the parent directory |
+| `⏎` | Open the selection |
+| `⌫` | Move the selection to the Trash |
+| `⇧⌘.` | Show/hide dotfiles |
 
 The FILE SYSTEM and AI panels share the right-hand slot: opening one closes the other.
 Drag the separator (or focus it and use the arrow keys) to rebalance the split; your width
@@ -140,11 +188,20 @@ src/
 │   ├── config-store.js      atomic 0600 config writes, secrets never leave main
 │   └── assistant/           provider registry, agent loop, Brave tool, CLI bridge
 └── renderer/
-    ├── renderer.js          terminal, telemetry, file browser, HUD controls
+    ├── renderer.js          terminal, pane layout, telemetry, file manager, HUD controls
     ├── assistant-ui.js      AI panel + settings dialog
     ├── filesystem-ui.js     file panel toggle, resize, view modes
+    ├── theme.js             accent/colour/typeface presets, persistence, token application
+    ├── theme-ui.js          the WYGLĄD controls in SETTINGS
+    ├── theme-tokens.css     RGB triplets every translucent surface is composed from
     └── styles.css           the entire Tron/GRID visual system
 ```
+
+Tabs own a layout tree of panes, and that tree lives in the DOM: a `.terminal-split` always
+holds exactly two children — a pane or another split — so closing one collapses the split by
+hoisting its sibling. Themes work the same way: every translucent colour is composed from an
+RGB triplet, so swapping five variables on `:root` repaints the whole HUD without touching a
+single component.
 
 The renderer runs sandboxed with a strict CSP (`connect-src 'none'`): it cannot reach the
 network at all. Every outbound request goes through the main process.
@@ -159,8 +216,9 @@ Only needed if you want to change the code — users install the `.dmg` above.
 git clone https://github.com/bkleparski/eDEX-UI-BK.git
 cd eDEX-UI-BK
 npm install      # also rebuilds node-pty for arm64
-npm start        # run from source
-npm run dist     # produce the .app, .dmg and .zip in dist/
+npm start           # run from source
+npm run dist        # produce the .app, .dmg and .zip in dist/
+npm run install:app # build and replace /Applications/EBARTNET-UI.app
 ```
 
 ### Tests
@@ -169,6 +227,7 @@ npm run dist     # produce the .app, .dmg and .zip in dist/
 npm run test:unit             # provider, config and CLI-bridge unit tests
 npm run test:smoke            # boots Electron, verifies the PTY round-trip
 npm run test:files            # file manager + theme behaviour on a temp directory
+npm run test:panes            # split, stack, navigate, resize and close panes
 npm run test:visual           # full UI walkthrough + screenshot diagnostics
 npm run test:assistant-ui     # live assistant run (needs Ollama + LM Studio up)
 npm run test:providers:local  # Ollama / LM Studio reachability

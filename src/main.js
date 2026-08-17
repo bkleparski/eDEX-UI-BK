@@ -1830,11 +1830,17 @@ function createWindow() {
               };
             })(),
             terminalGeometry: (() => {
-              const screen = document.querySelector('.terminal-instance:not([hidden]) .xterm-screen').getBoundingClientRect();
+              const screen = document.querySelector('.terminal-tab-view:not([hidden]) .terminal-instance.is-active-pane .xterm-screen').getBoundingClientRect();
               return { width: screen.width, height: screen.height };
             })()
           })`);
           diagnostics.packaged = app.isPackaged;
+          // The TTY context menu is a diagnostic artefact, not something the
+          // README should advertise — dismiss it before the frame is captured.
+          await window.webContents.executeJavaScript(`(async () => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          })()`);
           const screenshot = await window.webContents.capturePage();
           console.log(`Visual diagnostics: ${JSON.stringify(diagnostics)}`);
           if (!diagnostics.monitoringReady || diagnostics.monitoringSamples < 2) {
@@ -1963,6 +1969,27 @@ function createWindow() {
           );
           fs.writeFileSync(screenshotPath, screenshot.toPNG());
           console.log(`Visual test screenshot: ${screenshotPath}`);
+
+          // Crop of the WYGLĄD section alone: the theme controls document well
+          // on their own, and no provider list means no offline error banner.
+          const themeRect = await window.webContents.executeJavaScript(`(async () => {
+            document.getElementById('settingsToggle').click();
+            await new Promise((resolve) => setTimeout(resolve, 700));
+            const section = document.querySelector('#settingsDialog .theme-section');
+            if (!section) return null;
+            const rect = section.getBoundingClientRect();
+            return {
+              x: Math.round(rect.left) - 12,
+              y: Math.round(rect.top) - 12,
+              width: Math.round(rect.width) + 24,
+              height: Math.round(rect.height) + 24
+            };
+          })()`);
+          if (themeRect) {
+            const themeShotPath = path.join(os.tmpdir(), 'edex-ui-bk-theme-section.png');
+            fs.writeFileSync(themeShotPath, (await window.webContents.capturePage(themeRect)).toPNG());
+            console.log(`Theme section screenshot: ${themeShotPath}`);
+          }
           process.exitCode = 0;
         } catch (error) {
           console.error(`Visual test failed: ${error.message}`);
