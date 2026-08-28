@@ -492,6 +492,7 @@ function initializeControls() {
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
   document.getElementById('systemGroupToggle').addEventListener('click', toggleSystemGroup);
   initializeProcessSort();
+  initializeProcessView();
   initializeTerminalSearch();
   initializePasteWarning();
   recordSystemVisibilityState(!document.body.classList.contains('system-group-hidden'));

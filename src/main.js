@@ -58,6 +58,8 @@ const PROCESS_LIST_LIMIT = 14;
 const PROCESS_ENERGY_LIMIT = 40;
 const PROCESS_ENERGY_REFRESH_TICKS = 9;
 const GPU_REFRESH_TICKS = 3;
+const NETWORK_CONNECTIONS_REFRESH_TICKS = 5;
+const NETWORK_CONNECTIONS_LIMIT = 20;
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const SLOW_COMMAND_THRESHOLD_MS = 15_000;
 const PUBLIC_IP_CACHE_MS = 5 * 60 * 1_000;
@@ -679,6 +681,106 @@ async function collectGpuMetric() {
   };
 }
 
+function parseHostPort(part) {
+  if (typeof part !== 'string' || part.length === 0) return { host: null, port: null };
+  const bracketed = part.match(/^\[(.+)\]:(\d+|\*)$/);
+  if (bracketed) return { host: bracketed[1], port: bracketed[2] === '*' ? null : Number(bracketed[2]) };
+  const separatorIndex = part.lastIndexOf(':');
+  if (separatorIndex === -1) return { host: part === '*' ? null : part, port: null };
+  const host = part.slice(0, separatorIndex);
+  const port = part.slice(separatorIndex + 1);
+  return { host: host === '*' ? null : host, port: port === '*' ? null : Number(port) };
+}
+
+function connectionSortWeight(state) {
+  if (state === 'ESTABLISHED') return 0;
+  if (state === 'LISTEN') return 2;
+  return 1;
+}
+
+// Per-user `lsof -i` needs no root and triggers no TCC prompt on macOS — it
+// only surfaces sockets owned by the current user, which is exactly what a
+// HelpDesk technician wants to see on their own machine.
+//
+// `-F pcnPT` (field mode) sidesteps whitespace-column ambiguity in COMMAND
+// names entirely, but its record shape only became clear from a real run —
+// unlike the columnar `-i` output (which folds "TCP host:port->host:port
+// (STATE)" into one NAME field), field mode splits protocol into its own P
+// line and state into a T line, both emitted per file descriptor, after n:
+//   p702           <- PID, once per process
+//   crapportd      <- c: command, once per process
+//   f10            <- fd: starts a new connection record
+//   PTCP           <- P: protocol
+//   n*:54761       <- n: local[->remote] address
+//   TST=LISTEN     <- T: state (TCP only; UDP has no T line at all)
+async function collectNetworkConnections() {
+  if (forceOfflineTest) return [];
+
+  const stdout = await runCommand('/usr/sbin/lsof', ['-i', '-n', '-P', '-F', 'pcnPT'], 3_000);
+  const rows = [];
+  let currentPid = null;
+  let currentCommand = null;
+  let protocol = null;
+  let address = null;
+  let state = null;
+
+  const flush = () => {
+    if (!Number.isInteger(currentPid) || !protocol || !address) return;
+    const [localPart, remotePart] = address.split('->');
+    const local = parseHostPort(localPart);
+    const remote = remotePart ? parseHostPort(remotePart) : { host: null, port: null };
+    rows.push({
+      processName: safeLabel(currentCommand, 'UNKNOWN', 34),
+      pid: currentPid,
+      protocol,
+      localPort: local.port,
+      remoteAddress: remote.host,
+      remotePort: remote.port,
+      state: safeLabel(state, protocol === 'UDP' ? 'OPEN' : 'LISTEN', 16)
+    });
+  };
+
+  for (const line of stdout.split('\n')) {
+    if (line.length === 0) continue;
+    const tag = line[0];
+    const value = line.slice(1);
+    if (tag === 'p') {
+      flush();
+      currentPid = Number(value);
+      protocol = null;
+      address = null;
+      state = null;
+    } else if (tag === 'c') {
+      currentCommand = value;
+    } else if (tag === 'f') {
+      flush();
+      protocol = null;
+      address = null;
+      state = null;
+    } else if (tag === 'P') {
+      protocol = value;
+    } else if (tag === 'n') {
+      address = value;
+    } else if (tag === 'T' && value.startsWith('ST=')) {
+      state = value.slice(3);
+    }
+  }
+  flush();
+
+  const seen = new Set();
+  const deduped = [];
+  for (const row of rows) {
+    const key = `${row.pid}\0${row.protocol}\0${row.localPort}\0${row.remoteAddress}\0${row.remotePort}\0${row.state}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+
+  return deduped
+    .sort((left, right) => connectionSortWeight(left.state) - connectionSortWeight(right.state))
+    .slice(0, NETWORK_CONNECTIONS_LIMIT);
+}
+
 // `top` reports energy impact only from its second sample on, so this costs a
 // second of wall time and runs on its own slow cadence, off the telemetry tick.
 async function collectProcessEnergy() {
@@ -755,8 +857,9 @@ async function collectMonitoringSample(session) {
   const refreshConnectivity = !session.cache.connectivity || session.tick % CONNECTIVITY_REFRESH_TICKS === 0;
   const refreshBattery = !session.cache.battery || session.tick % BATTERY_REFRESH_TICKS === 0;
   const refreshGpu = !session.cache.gpu || session.tick % GPU_REFRESH_TICKS === 0;
+  const refreshConnections = !session.cache.connections || session.tick % NETWORK_CONNECTIONS_REFRESH_TICKS === 0;
   refreshProcessEnergy(session);
-  const [cpuResult, memoryResult, networkResult, diskResult, processesResult, connectivityResult, batteryResult, gpuResult] = await Promise.allSettled([
+  const [cpuResult, memoryResult, networkResult, diskResult, processesResult, connectivityResult, batteryResult, gpuResult, connectionsResult] = await Promise.allSettled([
     si.currentLoad(),
     si.mem(),
     collectNetworkMetric(session.cache.connectivity?.interface),
@@ -764,7 +867,8 @@ async function collectMonitoringSample(session) {
     refreshProcesses ? collectProcessesMetric(session.cache.energyByPid) : Promise.resolve(session.cache.processes),
     refreshConnectivity ? collectConnectivityMetric() : Promise.resolve(session.cache.connectivity),
     refreshBattery ? collectBatteryMetric() : Promise.resolve(session.cache.battery),
-    refreshGpu ? collectGpuMetric() : Promise.resolve(session.cache.gpu)
+    refreshGpu ? collectGpuMetric() : Promise.resolve(session.cache.gpu),
+    refreshConnections ? collectNetworkConnections() : Promise.resolve(session.cache.connections)
   ]);
 
   const cpu = cpuResult.status === 'fulfilled' ? {
@@ -813,6 +917,8 @@ async function collectMonitoringSample(session) {
 
   const gpu = gpuResult.status === 'fulfilled' ? gpuResult.value : session.cache.gpu || null;
   if (gpuResult.status === 'fulfilled') session.cache.gpu = gpu;
+  const connections = connectionsResult.status === 'fulfilled' ? connectionsResult.value : session.cache.connections || [];
+  if (connectionsResult.status === 'fulfilled') session.cache.connections = connections;
   const errors = {
     cpu: rejectedMessage(cpuResult),
     memory: rejectedMessage(memoryResult),
@@ -820,7 +926,8 @@ async function collectMonitoringSample(session) {
     disk: rejectedMessage(diskResult),
     processes: rejectedMessage(processesResult),
     connectivity: rejectedMessage(connectivityResult),
-    battery: rejectedMessage(batteryResult)
+    battery: rejectedMessage(batteryResult),
+    connections: rejectedMessage(connectionsResult)
   };
   const errorCount = Object.values(errors).filter(Boolean).length;
   session.tick += 1;
@@ -839,6 +946,7 @@ async function collectMonitoringSample(session) {
     battery: battery || { hasBattery: false },
     disk: disk || null,
     gpu,
+    connections,
     processes: topProcessesForEveryColumn(processes || []),
     energyAvailable: Boolean(session.cache.energyByPid),
     errors
@@ -876,7 +984,7 @@ function registerMonitoringIpc() {
       timer: null,
       inFlight: false,
       tick: 0,
-      cache: { disk: null, processes: null, connectivity: null, battery: null, energyByPid: null, energyError: null, gpu: null }
+      cache: { disk: null, processes: null, connectivity: null, battery: null, energyByPid: null, energyError: null, gpu: null, connections: null }
     };
     monitoringSessions.set(webContentsId, session);
     event.sender.once('destroyed', () => disposeMonitoring(webContentsId));

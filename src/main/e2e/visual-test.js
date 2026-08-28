@@ -625,6 +625,10 @@ function runVisualTest(window, context) {
             diskAvailable: document.getElementById('diskAvailable').textContent,
             diskWarning: document.getElementById('diskSection').classList.contains('is-warning'),
             processCount: document.querySelectorAll('#processList .process-row').length,
+            connectionCount: document.querySelectorAll('#connectionsList .process-row').length,
+            connectionRemoteExposed: [...document.querySelectorAll('#connectionsList .process-row')].some(
+              (row) => /\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/.test(row.textContent)
+            ),
             cspLocked: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.includes("connect-src 'none'"),
             cspImageDataOnly: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.includes("img-src 'self' data:"),
             gridColumns: getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns,
@@ -768,6 +772,9 @@ function runVisualTest(window, context) {
               || diagnostics.networkPublic !== '—' || diagnostics.networkPing !== '—') {
               throw new Error('Offline network degradation did not produce safe placeholders');
             }
+            if (diagnostics.connectionCount !== 0 || diagnostics.connectionRemoteExposed) {
+              throw new Error('Offline test mode leaked live network connection data into the CONNECTIONS panel');
+            }
           } else if (diagnostics.networkState !== 'online'
             || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(diagnostics.networkLan)
             || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(diagnostics.networkPublic)
@@ -785,6 +792,38 @@ function runVisualTest(window, context) {
             || diagnostics.filesPanelGeometry.fileListClientHeight < minimumVisualFileListHeight
             || diagnostics.terminalGeometry.width < minimumVisualTerminalWidthWithFilesPanel || diagnostics.terminalGeometry.height < 100) {
             throw new Error('Two-column layout has invalid geometry or scroll ownership');
+          }
+          // PROC/CONN toggle: switch to CONNECTIONS, check the header/list swap
+          // took effect and rows actually rendered (skip the row-count floor
+          // under forceOfflineTest, which deliberately empties the panel — see
+          // the connectionCount/connectionRemoteExposed check above), then
+          // switch back so the baseline screenshot below still shows PROC.
+          const connectionViewDiagnostics = await window.webContents.executeJavaScript(`(async () => {
+            document.getElementById('processViewConn').click();
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            const result = {
+              title: document.getElementById('processMetricTitle').textContent,
+              sortButtonsHidden: [...document.querySelectorAll('#processSortGroup [data-sort-key]')].every((btn) => btn.hidden),
+              connBtnHidden: document.getElementById('processViewConn').hidden,
+              procBtnHidden: document.getElementById('processViewProc').hidden,
+              processListHidden: document.getElementById('processList').hidden,
+              connectionsListHidden: document.getElementById('connectionsList').hidden,
+              connectionRowCount: document.querySelectorAll('#connectionsList .process-row').length
+            };
+            document.getElementById('processViewProc').click();
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            result.restoredTitle = document.getElementById('processMetricTitle').textContent;
+            result.restoredProcessListHidden = document.getElementById('processList').hidden;
+            result.restoredConnectionsListHidden = document.getElementById('connectionsList').hidden;
+            return result;
+          })()`);
+          if (connectionViewDiagnostics.title !== 'CONNECTIONS' || !connectionViewDiagnostics.sortButtonsHidden
+            || !connectionViewDiagnostics.connBtnHidden || connectionViewDiagnostics.procBtnHidden
+            || !connectionViewDiagnostics.processListHidden || connectionViewDiagnostics.connectionsListHidden
+            || (!forceOfflineTest && connectionViewDiagnostics.connectionRowCount === 0)
+            || connectionViewDiagnostics.restoredTitle !== 'TOP PROCESSES'
+            || connectionViewDiagnostics.restoredProcessListHidden || !connectionViewDiagnostics.restoredConnectionsListHidden) {
+            throw new Error('CONNECTIONS view toggle did not switch panels/title correctly or restore PROC view');
           }
           const screenshotPath = path.join(
             os.tmpdir(),

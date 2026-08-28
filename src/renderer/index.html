@@ -183,16 +183,23 @@
                 <div class="process-block" aria-labelledby="processMetricTitle">
                   <div class="metric-heading process-heading">
                     <span class="hud-label" id="processMetricTitle">TOP PROCESSES</span>
-                    <div class="process-sort" role="group" aria-label="Sortowanie procesów">
+                    <div class="process-sort" role="group" aria-label="Sortowanie i widok" id="processSortGroup">
                       <button class="process-sort-btn hud-label is-active" type="button" data-sort-key="cpuPercent"
                         aria-pressed="true">CPU</button>
                       <button class="process-sort-btn hud-label" type="button" data-sort-key="memoryPercent"
                         aria-pressed="false">MEM</button>
                       <button class="process-sort-btn hud-label" type="button" data-sort-key="energyImpact"
                         aria-pressed="false" title="Zużycie energii — najbliższy dostępny wskaźnik obciążenia GPU per proces">ENERGY</button>
+                      <button class="process-sort-btn hud-label" type="button" data-view-key="connections"
+                        aria-pressed="false" id="processViewConn" title="Pokaż połączenia sieciowe">CONN</button>
+                      <button class="process-sort-btn hud-label" type="button" data-view-key="process"
+                        aria-pressed="false" id="processViewProc" title="Pokaż procesy" hidden>PROC</button>
                     </div>
                   </div>
                   <ol class="process-list" id="processList">
+                    <li class="process-empty hud-label">AWAITING DATA</li>
+                  </ol>
+                  <ol class="process-list" id="connectionsList" hidden>
                     <li class="process-empty hud-label">AWAITING DATA</li>
                   </ol>
                 </div>

@@ -94,6 +94,8 @@ const rendererSharedGlobals = {
   focusPaneInDirection: 'readonly',
   focusTerminal: 'readonly',
   formatCapacity: 'readonly',
+  formatConnectionLabel: 'readonly',
+  formatConnectionState: 'readonly',
   formatFileModified: 'readonly',
   formatFileSize: 'readonly',
   formatPercent: 'readonly',
@@ -140,6 +142,7 @@ const rendererSharedGlobals = {
   initializeMonitoring: 'readonly',
   initializePasteWarning: 'readonly',
   initializeProcessSort: 'readonly',
+  initializeProcessView: 'readonly',
   initializeTTYContextMenu: 'readonly',
   initializeTerminal: 'readonly',
   initializeTerminalSearch: 'readonly',
@@ -149,6 +152,7 @@ const rendererSharedGlobals = {
   isSmokeTest: 'readonly',
   isTypingInForeignInput: 'readonly',
   isVisualTest: 'readonly',
+  lastConnections: 'readonly',
   lastFileBrowserResult: 'readonly',
   lastProcesses: 'readonly',
   listeners: 'readonly',
@@ -175,6 +179,7 @@ const rendererSharedGlobals = {
   positionTerminalSearchBar: 'readonly',
   presentImagePreview: 'readonly',
   processSortKey: 'readonly',
+  processViewKey: 'readonly',
   pushHistory: 'readonly',
   quoteShellPath: 'readonly',
   readSetting: 'readonly',
@@ -185,6 +190,7 @@ const rendererSharedGlobals = {
   removeBootListeners: 'readonly',
   removePaneContainer: 'readonly',
   removeTerminalTab: 'readonly',
+  renderConnections: 'readonly',
   renderCoreLoads: 'readonly',
   renderCurrentFileBrowserResult: 'readonly',
   renderFileBrowser: 'readonly',
@@ -207,6 +213,7 @@ const rendererSharedGlobals = {
   setFileSelection: 'readonly',
   setMeter: 'readonly',
   setProcessSortKey: 'readonly',
+  setProcessView: 'readonly',
   setStackedMeter: 'readonly',
   setSystemGroupVisible: 'readonly',
   setWarningState: 'readonly',
@@ -332,11 +339,13 @@ module.exports = [
       globals: {
         ...rendererEnvGlobals,
         ...withoutOwn(
-          'PROCESS_LIST_LIMIT', 'formatCapacity', 'formatPercent', 'formatProcessValue', 'formatRate',
-          'formatUptime', 'initializeMonitoring', 'initializeProcessSort', 'lastProcesses', 'numeric',
-          'processSortKey', 'pushHistory', 'renderCoreLoads', 'renderMonitoring', 'renderProcesses',
-          'setMeter', 'setProcessSortKey', 'setStackedMeter', 'setWarningState', 'sortProcesses',
-          'sparklinePoints', 'telemetryHistory', 'updateClock'
+          'PROCESS_LIST_LIMIT', 'formatCapacity', 'formatConnectionLabel', 'formatConnectionState',
+          'formatPercent', 'formatProcessValue', 'formatRate', 'formatUptime', 'initializeMonitoring',
+          'initializeProcessSort', 'initializeProcessView', 'lastConnections', 'lastProcesses', 'numeric',
+          'processSortKey', 'processViewKey', 'pushHistory', 'renderConnections', 'renderCoreLoads',
+          'renderMonitoring', 'renderProcesses', 'setMeter', 'setProcessSortKey', 'setProcessView',
+          'setStackedMeter', 'setWarningState', 'sortProcesses', 'sparklinePoints', 'telemetryHistory',
+          'updateClock'
         )
       }
     },

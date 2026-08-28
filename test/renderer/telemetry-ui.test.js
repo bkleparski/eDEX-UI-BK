@@ -10,7 +10,9 @@ const {
   formatUptime,
   sparklinePoints,
   pushHistory,
-  sortProcesses
+  sortProcesses,
+  formatConnectionState,
+  formatConnectionLabel
 } = require('../../src/renderer/telemetry-ui.js');
 
 test('numeric accepts finite numbers and numeric strings, rejects everything else', () => {
@@ -113,4 +115,32 @@ test('sortProcesses sorts descending, sends nulls to the bottom, and never mutat
   assert.deepEqual(byEnergy.map((p) => p.name), ['c', 'a', 'b', 'd']);
 
   assert.deepEqual(processes.map((p) => p.name), originalOrder);
+});
+
+test('formatConnectionState abbreviates known BSD socket states and passes through unknown ones', () => {
+  assert.equal(formatConnectionState('ESTABLISHED'), 'EST');
+  assert.equal(formatConnectionState('LISTEN'), 'LISTEN');
+  assert.equal(formatConnectionState('TIME_WAIT'), 'TIME');
+  assert.equal(formatConnectionState('SOME_UNKNOWN_STATE'), 'SOME_UNK');
+  assert.equal(formatConnectionState(null), '--');
+  assert.equal(formatConnectionState(''), '--');
+});
+
+test('formatConnectionLabel shows the remote peer when present, the local port otherwise', () => {
+  assert.equal(
+    formatConnectionLabel({ processName: 'Safari', remoteAddress: '17.253.144.10', remotePort: 443 }),
+    'Safari → 17.253.144.10:443'
+  );
+  assert.equal(
+    formatConnectionLabel({ processName: 'nginx', remoteAddress: null, localPort: 8080 }),
+    'nginx · *:8080'
+  );
+  assert.equal(
+    formatConnectionLabel({ processName: 'nginx', remoteAddress: null, localPort: null }),
+    'nginx · *'
+  );
+  assert.equal(
+    formatConnectionLabel({ processName: null, remoteAddress: '1.2.3.4', remotePort: null }),
+    'UNKNOWN → 1.2.3.4'
+  );
 });

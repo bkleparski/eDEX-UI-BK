@@ -1,11 +1,13 @@
 'use strict';
 
 /* exported
-  PROCESS_LIST_LIMIT, formatCapacity, formatPercent, formatProcessValue, formatRate,
-  formatUptime, initializeMonitoring, initializeProcessSort, lastProcesses, numeric,
-  processSortKey, pushHistory, renderCoreLoads, renderMonitoring, renderProcesses, setMeter,
-  setProcessSortKey, setStackedMeter, setWarningState, sortProcesses, sparklinePoints,
-  telemetryHistory, updateClock
+  PROCESS_LIST_LIMIT, formatCapacity, formatConnectionLabel, formatConnectionState,
+  formatPercent, formatProcessValue, formatRate, formatUptime, initializeMonitoring,
+  initializeProcessSort, initializeProcessView, lastConnections, lastProcesses, numeric,
+  processSortKey, processViewKey, pushHistory, renderConnections, renderCoreLoads,
+  renderMonitoring, renderProcesses, setMeter, setProcessSortKey, setProcessView,
+  setStackedMeter, setWarningState, sortProcesses, sparklinePoints, telemetryHistory,
+  updateClock
 */
 
 const telemetryHistory = {
@@ -19,6 +21,23 @@ const telemetryHistory = {
 const PROCESS_LIST_LIMIT = 14;
 let processSortKey = 'cpuPercent';
 let lastProcesses = [];
+let processViewKey = 'process';
+let lastConnections = [];
+
+const CONNECTION_STATE_ABBREVIATIONS = {
+  ESTABLISHED: 'EST',
+  LISTEN: 'LISTEN',
+  SYN_SENT: 'SYN',
+  SYN_RCVD: 'SYN',
+  CLOSE_WAIT: 'CLOSE',
+  FIN_WAIT_1: 'FIN',
+  FIN_WAIT_2: 'FIN',
+  CLOSING: 'CLOSING',
+  LAST_ACK: 'LACK',
+  TIME_WAIT: 'TIME',
+  CLOSED: 'CLOSED',
+  OPEN: 'OPEN'
+};
 
 function numeric(value) {
   const number = Number(value);
@@ -170,7 +189,7 @@ function renderProcesses(processes, sortKey = processSortKey) {
 function setProcessSortKey(sortKey) {
   if (sortKey === processSortKey) return;
   processSortKey = sortKey;
-  document.querySelectorAll('.process-sort-btn').forEach((button) => {
+  document.querySelectorAll('#processSortGroup .process-sort-btn[data-sort-key]').forEach((button) => {
     const isActive = button.dataset.sortKey === sortKey;
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-pressed', String(isActive));
@@ -179,9 +198,91 @@ function setProcessSortKey(sortKey) {
 }
 
 function initializeProcessSort() {
-  document.querySelectorAll('.process-sort-btn').forEach((button) => {
+  document.querySelectorAll('#processSortGroup .process-sort-btn[data-sort-key]').forEach((button) => {
     button.addEventListener('click', () => setProcessSortKey(button.dataset.sortKey));
   });
+}
+
+// lsof reports abbreviated BSD socket state names; anything not in the map
+// (a kernel state this list doesn't know about) still renders, just untrimmed.
+function formatConnectionState(state) {
+  if (typeof state !== 'string' || state.length === 0) return '--';
+  return CONNECTION_STATE_ABBREVIATIONS[state] || state.slice(0, 8);
+}
+
+// A missing port (main.js sends null for the wildcard "*" lsof reports) is
+// not the same as port 0 — numeric()'s null-coerces-to-0 rule is right for
+// telemetry percentages but wrong here, so ports get their own finite check.
+function port(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+// LISTEN/OPEN sockets carry no remote peer — show the local port they're
+// bound to instead, so the row is never blank.
+function formatConnectionLabel(connectionInfo) {
+  const processName = typeof connectionInfo.processName === 'string' ? connectionInfo.processName : 'UNKNOWN';
+  if (connectionInfo.remoteAddress) {
+    const remotePort = port(connectionInfo.remotePort);
+    return `${processName} → ${connectionInfo.remoteAddress}${remotePort !== null ? `:${remotePort}` : ''}`;
+  }
+  const localPort = port(connectionInfo.localPort);
+  return `${processName} · ${localPort !== null ? `*:${localPort}` : '*'}`;
+}
+
+function renderConnections(connections) {
+  const list = document.getElementById('connectionsList');
+  list.replaceChildren();
+  if (!Array.isArray(connections) || connections.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'process-empty hud-label';
+    empty.textContent = 'CONNECTION DATA N/A';
+    list.append(empty);
+    return;
+  }
+
+  connections.forEach((connectionInfo) => {
+    const row = document.createElement('li');
+    row.className = 'process-row';
+
+    const protocol = document.createElement('span');
+    protocol.className = 'process-rank';
+    protocol.textContent = typeof connectionInfo.protocol === 'string' ? connectionInfo.protocol : '--';
+
+    const label = document.createElement('span');
+    label.className = 'process-name';
+    label.textContent = formatConnectionLabel(connectionInfo);
+    label.title = `${label.textContent} (PID ${port(connectionInfo.pid) ?? '--'})`;
+
+    const state = document.createElement('span');
+    state.className = 'process-cpu';
+    state.textContent = formatConnectionState(connectionInfo.state);
+
+    row.append(protocol, label, state);
+    list.append(row);
+  });
+}
+
+// CPU/MEM/ENERGY only make sense for the process list, so switching to
+// CONNECTIONS hides them rather than adding a second row of controls — the
+// telemetry column has no vertical slack to spare (see the :has(#gpuBlock)
+// compaction rules below, which already claim it back for TOP PROCESSES).
+function setProcessView(viewKey) {
+  if (viewKey === processViewKey) return;
+  processViewKey = viewKey;
+  const isProcessView = viewKey === 'process';
+  document.getElementById('processMetricTitle').textContent = isProcessView ? 'TOP PROCESSES' : 'CONNECTIONS';
+  document.querySelectorAll('#processSortGroup .process-sort-btn[data-sort-key]').forEach((button) => {
+    button.hidden = !isProcessView;
+  });
+  document.getElementById('processViewConn').hidden = !isProcessView;
+  document.getElementById('processViewProc').hidden = isProcessView;
+  document.getElementById('processList').hidden = !isProcessView;
+  document.getElementById('connectionsList').hidden = isProcessView;
+}
+
+function initializeProcessView() {
+  document.getElementById('processViewConn').addEventListener('click', () => setProcessView('connections'));
+  document.getElementById('processViewProc').addEventListener('click', () => setProcessView('process'));
 }
 
 function renderMonitoring(sample) {
@@ -278,6 +379,9 @@ function renderMonitoring(sample) {
   lastProcesses = Array.isArray(sample.processes) ? sample.processes : [];
   renderProcesses(lastProcesses);
 
+  lastConnections = Array.isArray(sample.connections) ? sample.connections : [];
+  renderConnections(lastConnections);
+
   const systemUnavailable = !sample.cpu && !sample.memory;
   const networkUnavailable = !sample.network && (!sample.processes || sample.processes.length === 0);
   document.getElementById('systemError').hidden = !systemUnavailable;
@@ -326,6 +430,8 @@ if (typeof module !== 'undefined' && module.exports) {
     formatUptime,
     sparklinePoints,
     pushHistory,
-    sortProcesses
+    sortProcesses,
+    formatConnectionState,
+    formatConnectionLabel
   };
 }
