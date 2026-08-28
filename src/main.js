@@ -2549,6 +2549,40 @@ function createWindow() {
                 view().querySelector('.terminal-split[data-direction="row"] .terminal-split[data-direction="column"]')
               );
 
+              // 2b. shift+cmd+enter zooms the focused (nested) pane — the split
+              // tree must stay put, only visibility/fit changes — then zooms
+              // back out again.
+              const zoomedId = activePane();
+              const siblings = () => panes().filter((pane) => pane.dataset.sessionId !== zoomedId);
+              press('Enter', { shiftKey: true });
+              await wait(300);
+              evidence.zoomMarksTabView = view().classList.contains('is-zoomed');
+              evidence.zoomHidesSiblings = siblings().every((pane) => pane.getBoundingClientRect().width === 0);
+              const zoomedRect = document.querySelector(
+                '.terminal-instance[data-session-id="' + zoomedId + '"]'
+              ).getBoundingClientRect();
+              evidence.zoomFillsTabView = Math.abs(zoomedRect.width - view().getBoundingClientRect().width) < 2;
+              evidence.zoomChipMarked = Boolean(
+                document.querySelector('.tty-pane-chip[data-session-id="' + zoomedId + '"]')?.classList.contains('is-zoomed')
+              );
+              press('Enter', { shiftKey: true });
+              await wait(300);
+              evidence.zoomExitClearsClass = !view().classList.contains('is-zoomed');
+              evidence.zoomExitRestoresSiblings = siblings().every((pane) => pane.getBoundingClientRect().width > 0);
+              evidence.zoomExitRefits = panes().every((pane) => {
+                const screen = pane.querySelector('.xterm-screen');
+                const paneRect = pane.getBoundingClientRect();
+                return screen && Math.abs(screen.getBoundingClientRect().width - paneRect.width) < 20;
+              });
+
+              // Geometric nav is meaningless against zero-size hidden panes,
+              // so ⌥⌘→ must drop the zoom before it walks the grid.
+              press('Enter', { shiftKey: true });
+              await wait(300);
+              press('ArrowRight', { altKey: true });
+              await wait(300);
+              evidence.zoomExitsOnArrowNav = !view().classList.contains('is-zoomed');
+
               // 3. alt+cmd+arrows walk the pane grid
               const leftPaneId = panes()[0].dataset.sessionId;
               press('ArrowLeft', { altKey: true });

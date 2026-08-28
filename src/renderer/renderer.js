@@ -51,6 +51,7 @@ const terminalTabs = new Map();
 let activeSessionId = null;
 let activeTabId = null;
 let terminalSearchSessionId = null;
+let zoomedSessionId = null;
 let nextSessionNumber = 1;
 let nextTabNumber = 1;
 let bootTimer;
@@ -121,6 +122,7 @@ function applyTerminalAppearance(appearance = window.themeApi?.appearance()) {
     session.terminal.options.theme = palette;
     session.terminal.options.fontFamily = appearance.fontFamily;
     session.terminal.options.fontSize = appearance.fontSize;
+    if (appearance.scrollback) session.terminal.options.scrollback = appearance.scrollback;
     // Cached glyph bitmaps are keyed by (char, colors), so a new accent or
     // font would otherwise keep painting from the stale atlas until enough
     // cache churn evicts it — clear it explicitly so the switch is instant.
@@ -1685,6 +1687,74 @@ function initializeTerminalSearch() {
   });
 }
 
+const PASTE_PREVIEW_LINES = 5;
+let pasteWarningSessionId = null;
+let pasteWarningText = '';
+
+function showPasteWarning(session, text) {
+  pasteWarningSessionId = session.id;
+  pasteWarningText = text;
+  const lines = text.split(/\r\n|\r|\n/);
+  const preview = lines.slice(0, PASTE_PREVIEW_LINES).join('\n');
+  const remaining = lines.length - PASTE_PREVIEW_LINES;
+  const previewElement = document.getElementById('pasteWarningPreview');
+  previewElement.textContent = remaining > 0 ? `${preview}\n… (+${remaining} więcej)` : preview;
+  document.getElementById('pasteWarningLabel').textContent = `WKLEJANIE WIELOLINIOWE — ${lines.length} LINII`;
+  const popover = document.getElementById('pasteWarningPopover');
+  popover.hidden = false;
+  popover.setAttribute('aria-hidden', 'false');
+  // Default focus sits on CANCEL — a warning dialog shouldn't make the risky
+  // action the one muscle memory (Enter/Space on the focused control) picks.
+  document.getElementById('pasteWarningCancel').focus();
+}
+
+function hidePasteWarning() {
+  const popover = document.getElementById('pasteWarningPopover');
+  if (popover.hidden) return;
+  popover.hidden = true;
+  popover.setAttribute('aria-hidden', 'true');
+  pasteWarningSessionId = null;
+  pasteWarningText = '';
+  focusTerminal();
+}
+
+function confirmPasteWarning() {
+  const session = terminalSessions.get(pasteWarningSessionId);
+  const text = pasteWarningText;
+  hidePasteWarning();
+  session?.terminal.paste(text);
+}
+
+// Only the terminal's own hidden textarea goes through this gate — anything
+// else (search box, file filter, rename inputs) keeps its native paste.
+// Capture on document so this runs before xterm's own paste listener on the
+// textarea itself (same-element listeners can't be reordered, only outrun).
+function handleTerminalPasteCapture(event) {
+  const target = event.target;
+  if (!target?.classList?.contains('xterm-helper-textarea')) return;
+  const session = [...terminalSessions.values()].find((candidate) => candidate.terminal.textarea === target);
+  if (!session) return;
+  const text = event.clipboardData?.getData('text/plain') ?? '';
+  if (!text) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const lineCount = text.split(/\r\n|\r|\n/).length;
+  if (lineCount > 1) showPasteWarning(session, text);
+  else session.terminal.paste(text);
+}
+
+function initializePasteWarning() {
+  document.addEventListener('paste', handleTerminalPasteCapture, true);
+  document.getElementById('pasteWarningConfirm').addEventListener('click', confirmPasteWarning);
+  document.getElementById('pasteWarningCancel').addEventListener('click', hidePasteWarning);
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || document.getElementById('pasteWarningPopover').hidden) return;
+    event.preventDefault();
+    event.stopPropagation();
+    hidePasteWarning();
+  }, true);
+}
+
 // Geometric navigation beats tree walking here: it does the right thing for
 // any nesting depth, the same way ⌥⌘arrows behave in iTerm2.
 function focusPaneInDirection(direction) {
@@ -1714,6 +1784,48 @@ function focusPaneInDirection(direction) {
   if (!best) return;
   switchTerminalSession(best.id);
   document.body.dataset.paneNavigationCount = String((Number(document.body.dataset.paneNavigationCount) || 0) + 1);
+}
+
+// The split tree in the DOM stays exactly as-is — zoom only marks the
+// ancestor chain from the target pane up to its tab-view with a class, and
+// CSS (`.terminal-split.is-zoom-path > *:not(.is-zoom-path)`) hides every
+// sibling off that path. The zoomed pane is always the sole *visible* flex
+// child at each level, so it fills the tab-view without any layout math.
+function paneZoomPath(container, tabView) {
+  const path = [];
+  for (let node = container; node && node !== tabView; node = node.parentElement) path.push(node);
+  return path;
+}
+
+function toggleActivePaneZoom() {
+  if (zoomedSessionId) exitPaneZoom();
+  else enterPaneZoom(activeSessionId);
+}
+
+function enterPaneZoom(sessionId) {
+  const session = terminalSessions.get(sessionId);
+  const tab = session && terminalTabs.get(session.tabId);
+  if (!session || !tab) return;
+  zoomedSessionId = sessionId;
+  for (const element of paneZoomPath(session.container, tab.view)) element.classList.add('is-zoom-path');
+  tab.view.classList.add('is-zoomed');
+  renderTabLabel(tab.id);
+  fitActiveTerminal();
+}
+
+function exitPaneZoom() {
+  if (!zoomedSessionId) return;
+  const session = terminalSessions.get(zoomedSessionId);
+  const tab = session && terminalTabs.get(session.tabId);
+  zoomedSessionId = null;
+  // The session (or its tab) may already be gone by the time this runs, e.g.
+  // when called from handleTerminalExit — the path elements went with it.
+  if (session && tab) {
+    for (const element of paneZoomPath(session.container, tab.view)) element.classList.remove('is-zoom-path');
+    tab.view.classList.remove('is-zoomed');
+    renderTabLabel(tab.id);
+  }
+  fitActiveTerminal();
 }
 
 async function splitActivePane(direction) {
@@ -1955,6 +2067,7 @@ function initializeControls() {
   document.getElementById('systemGroupToggle').addEventListener('click', toggleSystemGroup);
   initializeProcessSort();
   initializeTerminalSearch();
+  initializePasteWarning();
   recordSystemVisibilityState(!document.body.classList.contains('system-group-hidden'));
   updateClock();
   const clockTimer = setInterval(updateClock, 1_000);
@@ -1972,7 +2085,17 @@ function initializeControls() {
       if (!direction) return;
       event.preventDefault();
       event.stopPropagation();
+      // Hidden panes report zero-size rects, which breaks the geometric
+      // scoring below — leave zoom before it runs, not after.
+      if (zoomedSessionId) exitPaneZoom();
       focusPaneInDirection(direction);
+      return;
+    }
+    // ⇧⌘⏎ toggles a temporary full-pane zoom, iTerm2-style.
+    if (event.shiftKey && (event.code === 'Enter' || event.code === 'NumpadEnter')) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleActivePaneZoom();
       return;
     }
     // ⌘F is FILES' filter shortcut while that panel has real focus (handled in
@@ -1985,6 +2108,14 @@ function initializeControls() {
       event.preventDefault();
       event.stopPropagation();
       openTerminalSearch();
+      return;
+    }
+    // ⌘K clears the active pane's scrollback, like iTerm2.
+    if (event.code === 'KeyK' && !event.shiftKey) {
+      if (isTypingInForeignInput()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      terminalSessions.get(activeSessionId)?.terminal.clear();
       return;
     }
     // ⌘D splits side by side, ⇧⌘D stacks — same orientation as iTerm2.
@@ -2106,6 +2237,9 @@ function renderTabLabel(tabId) {
   tab.button.dataset.sessionId = session?.id || '';
   tab.button.dataset.paneCount = String(sessions.length);
   tab.button.title = session ? session.manualName || session.autoTitle || context : context;
+  // Only an unsplit tab needs the marker on the tab button itself — a split
+  // tab's own chip carries it instead (below).
+  tab.button.classList.toggle('is-zoomed', !split && session?.id === zoomedSessionId);
   renderPaneChips(tab, sessions, split);
 }
 
@@ -2152,6 +2286,7 @@ function renderPaneChips(tab, sessions, split) {
     chip.title = session.manualName || session.autoTitle || label;
     chip.dataset.manualName = session.manualName || '';
     chip.classList.toggle('is-active', session.id === tab.activePaneId);
+    chip.classList.toggle('is-zoomed', session.id === zoomedSessionId);
     chip.setAttribute('aria-pressed', String(session.id === tab.activePaneId));
     session.chip = chip;
   }
@@ -2290,6 +2425,7 @@ function switchTerminalSession(sessionId) {
   if (sessionChanged && terminalSearchSessionId && terminalSearchSessionId !== sessionId) {
     closeTerminalSearch({ refocusTerminal: false });
   }
+  if (sessionChanged && zoomedSessionId) exitPaneZoom();
   activeSessionId = sessionId;
   activeTabId = nextSession.tabId;
   const activeTab = terminalTabs.get(activeTabId);
@@ -2327,6 +2463,7 @@ function handleTerminalExit(sessionId) {
   if (ttyContextSessionId === sessionId) hideTTYContextMenu();
   if (ttyRenameSessionId === sessionId) hideTTYRename();
   if (terminalSearchSessionId === sessionId) closeTerminalSearch({ refocusTerminal: false });
+  if (zoomedSessionId === sessionId) exitPaneZoom();
 
   terminalSessions.delete(sessionId);
   session.terminal.dispose();
@@ -2509,7 +2646,7 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
     fontWeight: '400',
     letterSpacing: 0.2,
     lineHeight: 1.16,
-    scrollback: 10_000,
+    scrollback: appearance.scrollback || 10_000,
     theme: themedTerminalPalette(appearance)
   });
 

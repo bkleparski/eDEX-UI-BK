@@ -922,6 +922,15 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   box-shadow: 0 0 8px rgb(var(--cyan-rgb) / .5);
 }
 
+/* Pane zoom (⇧⌘⏎): the split tree in the DOM never changes, this just hides
+   whatever sits off the path from the zoomed pane up to its tab-view, one
+   level at a time — the marked survivor is always the sole visible flex
+   child, so it fills the freed space without any layout math of its own. */
+.terminal-split.is-zoom-path > *:not(.is-zoom-path),
+.terminal-tab-view.is-zoomed > *:not(.is-zoom-path) {
+  display: none;
+}
+
 /* Only mark the focused pane once the tab is actually split — a lone pane
    needs no border to tell it apart. */
 .terminal-instance.is-active-pane:not(:only-child)::after {
@@ -981,6 +990,11 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   color: var(--text-bright);
   background: rgb(var(--cyan-rgb) / .08);
   text-shadow: var(--glow-label);
+}
+
+.tty-pane-chip.is-zoomed .tty-pane-name::before {
+  content: '⤢ ';
+  color: var(--cyan-bright);
 }
 
 .tty-pane-chip[disabled] {
@@ -1348,6 +1362,11 @@ body.booting .boot-content--bottom {
   color: var(--text-bright);
 }
 
+.tty-tab.is-zoomed .tty-context::before {
+  content: '⤢ ';
+  color: var(--cyan-bright);
+}
+
 .tty-context-menu,
 .tty-rename-popover {
   position: fixed;
@@ -1434,6 +1453,49 @@ body.booting .boot-content--bottom {
 .tty-rename-input:focus {
   border-color: var(--cyan-bright);
   box-shadow: 0 0 6px rgb(var(--cyan-rgb) / .2), inset 0 0 5px rgb(var(--cyan-rgb) / .1);
+}
+
+/* Centered, not anchored to a click point like the other popovers — this one
+   interrupts, so it should read as a modal, not a contextual flyout. */
+.paste-warning-popover {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  width: min(440px, 80vw);
+  gap: 8px;
+  padding: 12px;
+}
+
+.paste-warning-preview {
+  max-height: 140px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .3);
+  background: rgb(0 0 0 / .5);
+  color: var(--text-primary);
+  font-family: var(--font-terminal);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.paste-warning-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.paste-warning-actions #pasteWarningConfirm {
+  border-color: rgb(var(--amber-rgb) / .6);
+  color: var(--text-warning);
+}
+
+.paste-warning-actions #pasteWarningConfirm:hover {
+  border-color: var(--amber);
+  color: var(--amber);
 }
 
 .terminal-search {

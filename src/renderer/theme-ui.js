@@ -9,7 +9,7 @@
 
   const elements = Object.fromEntries([
     'themeAccents', 'themeTerminalColors', 'themeFont', 'themeFontSize',
-    'themePreview', 'themePreviewText', 'themeNote', 'themeReset'
+    'themePreview', 'themePreviewText', 'themeNote', 'themeReset', 'scrollbackSize'
   ].map((id) => [id, document.getElementById(id)]));
 
   if (!elements.themeAccents) return;
@@ -65,6 +65,17 @@
     elements.themeFontSize.append(button);
   }
 
+  for (const size of themeApi.scrollbackSizes) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'theme-size';
+    button.dataset.themeValue = String(size);
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', 'false');
+    button.textContent = size >= 1_000 ? `${size / 1_000}K` : String(size);
+    elements.scrollbackSize.append(button);
+  }
+
   function syncControls() {
     const theme = themeApi.get();
     const appearance = themeApi.appearance();
@@ -77,6 +88,9 @@
     }
     for (const button of elements.themeFontSize.querySelectorAll('.theme-size')) {
       button.setAttribute('aria-checked', String(Number(button.dataset.themeValue) === theme.terminalFontSize));
+    }
+    for (const button of elements.scrollbackSize.querySelectorAll('.theme-size')) {
+      button.setAttribute('aria-checked', String(Number(button.dataset.themeValue) === theme.terminalScrollback));
     }
     elements.themeFont.value = theme.terminalFont;
 
@@ -101,6 +115,7 @@
   handleGroupClick(elements.themeAccents, 'accent');
   handleGroupClick(elements.themeTerminalColors, 'terminalColor');
   handleGroupClick(elements.themeFontSize, 'terminalFontSize', Number);
+  handleGroupClick(elements.scrollbackSize, 'terminalScrollback', Number);
 
   elements.themeFont.addEventListener('change', () => {
     themeApi.set({ terminalFont: elements.themeFont.value });

@@ -350,6 +350,16 @@
         <button class="terminal-search__btn hud-label" id="terminalSearchClose" type="button" title="ZAMKNIJ (ESC)">CLOSE</button>
       </div>
 
+      <div class="tty-rename-popover paste-warning-popover" id="pasteWarningPopover" role="alertdialog"
+        aria-labelledby="pasteWarningLabel" aria-hidden="true" hidden>
+        <span class="hud-label" id="pasteWarningLabel">WKLEJANIE WIELOLINIOWE</span>
+        <pre class="paste-warning-preview" id="pasteWarningPreview"></pre>
+        <div class="paste-warning-actions">
+          <button class="view-mode-btn hud-label" id="pasteWarningCancel" type="button">CANCEL</button>
+          <button class="view-mode-btn hud-label" id="pasteWarningConfirm" type="button">PASTE</button>
+        </div>
+      </div>
+
       <footer class="bottom-hud panel hud-frame boot-frame">
         <div class="bottom-hud__content boot-content boot-content--bottom">
           <span class="hud-label input-route">INPUT ROUTE / LOCAL PTY</span>
@@ -410,6 +420,13 @@
             <div class="theme-footer">
               <span class="theme-note hud-label" id="themeNote"></span>
               <button class="text-action hud-label" id="themeReset" type="button">PRZYWRÓĆ DOMYŚLNE</button>
+            </div>
+          </section>
+          <section class="settings-section">
+            <h3 class="hud-label">SCROLLBACK</h3>
+            <div class="theme-grid">
+              <label class="field-label hud-label" for="scrollbackSize">HISTORIA LINII</label>
+              <div class="theme-sizes" id="scrollbackSize" role="radiogroup" aria-label="Rozmiar scrollbacku terminala"></div>
             </div>
           </section>
           <section class="settings-section">

@@ -105,11 +105,17 @@ const TERMINAL_FONTS = [
 
 const FONT_SIZES = [11, 12, 13, 14, 15, 16];
 
+// Not visual, but every other terminal knob already lives here too (see
+// terminalColor/terminalFont) — one persisted-preferences blob beats a second
+// tiny store for just this.
+const SCROLLBACK_SIZES = [1_000, 10_000, 50_000, 100_000];
+
 const DEFAULT_THEME = Object.freeze({
   accent: 'cyan',
   terminalColor: 'cyan',
   terminalFont: 'neon',
-  terminalFontSize: 12
+  terminalFontSize: 12,
+  terminalScrollback: 10_000
 });
 
 function accentById(id) {
@@ -127,11 +133,13 @@ function terminalFontById(id) {
 function normalizeTheme(value) {
   const source = value && typeof value === 'object' ? value : {};
   const size = Number(source.terminalFontSize);
+  const scrollback = Number(source.terminalScrollback);
   return {
     accent: accentById(source.accent).id,
     terminalColor: terminalColorById(source.terminalColor).id,
     terminalFont: terminalFontById(source.terminalFont).id,
-    terminalFontSize: FONT_SIZES.includes(size) ? size : DEFAULT_THEME.terminalFontSize
+    terminalFontSize: FONT_SIZES.includes(size) ? size : DEFAULT_THEME.terminalFontSize,
+    terminalScrollback: SCROLLBACK_SIZES.includes(scrollback) ? scrollback : DEFAULT_THEME.terminalScrollback
   };
 }
 
@@ -169,7 +177,8 @@ function terminalAppearance(theme = currentTheme) {
     foreground: color.foreground,
     cursor: color.cursor,
     fontFamily: font.family,
-    fontSize: theme.terminalFontSize
+    fontSize: theme.terminalFontSize,
+    scrollback: theme.terminalScrollback
   };
 }
 
@@ -196,6 +205,7 @@ window.themeApi = Object.freeze({
   terminalColors: TERMINAL_COLORS,
   terminalFonts: TERMINAL_FONTS,
   fontSizes: FONT_SIZES,
+  scrollbackSizes: SCROLLBACK_SIZES,
   defaults: DEFAULT_THEME,
   get: () => ({ ...currentTheme }),
   appearance: () => terminalAppearance(),
