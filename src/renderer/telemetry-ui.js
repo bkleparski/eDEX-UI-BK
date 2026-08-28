@@ -304,3 +304,20 @@ function updateClock() {
   document.getElementById('hudDate').textContent = date;
   document.getElementById('hudDate').dateTime = date;
 }
+
+// Node-only export for unit tests (test/renderer/telemetry-ui.test.js). This
+// file stays a plain global-scope <script> in the browser — `module` is
+// undefined there, so this block never runs and browser behavior is
+// unchanged. Only the pure, DOM-free functions are exported.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    numeric,
+    formatPercent,
+    formatCapacity,
+    formatRate,
+    formatUptime,
+    sparklinePoints,
+    pushHistory,
+    sortProcesses
+  };
+}

@@ -986,3 +986,27 @@ function handleFileBrowserKeydown(event) {
     trashSelection(paths);
   }
 }
+
+// Node-only export for unit tests (test/renderer/file-browser.test.js). This
+// file stays a plain global-scope <script> in the browser — `module` is
+// undefined there, so this block never runs and browser behavior is
+// unchanged. Only the pure, DOM-free functions are exported. sortFileEntries
+// and matchesFileFilter close over module-level sort/filter state that the
+// browser UI mutates through click handlers (fileSortKey, fileSortAscending,
+// fileFilterQuery); the two __set*ForTest helpers let tests drive that state
+// without touching the DOM — they have no browser call site.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    fileTypeMarker,
+    isPreviewableImage,
+    matchesFileFilter,
+    sortFileEntries,
+    __setFileFilterQueryForTest(query) {
+      fileFilterQuery = query;
+    },
+    __setFileSortStateForTest(key, ascending) {
+      fileSortKey = key;
+      fileSortAscending = ascending;
+    }
+  };
+}
