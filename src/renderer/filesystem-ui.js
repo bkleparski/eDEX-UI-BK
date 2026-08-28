@@ -27,140 +27,27 @@
 
   if (!elements.filesPanel || !elements.filesResizer) return;
 
-  const state = {
-    filesPreferredWidth: null,
-    filesWidthStored: false,
-    resizePointerId: null,
-    resizeStartX: 0,
-    resizeStartWidth: FILES_DEFAULT_WIDTH
-  };
-
-  const workspace = document.querySelector('.workspace');
-
-  function readFilesWidth() {
-    try {
-      const stored = Number.parseFloat(window.localStorage.getItem(FILES_WIDTH_KEY));
-      return Number.isFinite(stored) ? stored : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function saveFilesWidth(width) {
-    try {
-      window.localStorage.setItem(FILES_WIDTH_KEY, String(Math.round(width)));
-    } catch {
-      // Layout persistence is optional when storage is unavailable.
-    }
-  }
-
-  function filesWidthBounds() {
-    const workspaceWidth = workspace.clientWidth;
-    const overlayMode = window.matchMedia('(max-width: 1180px)').matches;
-    const telemetry = document.getElementById('telemetryPanel');
-    const telemetryWidth = !overlayMode && telemetry && getComputedStyle(telemetry).display !== 'none'
-      ? telemetry.getBoundingClientRect().width
-      : 0;
-    const reservedGaps = overlayMode ? 14 : 28;
-    const terminalMinWidth = overlayMode ? 300 : TERMINAL_MIN_WIDTH;
-    const sharedWidth = workspaceWidth - telemetryWidth - reservedGaps;
-    const available = sharedWidth - terminalMinWidth;
-    const max = Math.max(FILES_MIN_WIDTH, Math.min(720, Math.floor(available)));
-    const min = Math.min(FILES_MIN_WIDTH, max);
-    const fallback = Math.round(Math.min(max, Math.max(min, sharedWidth / 2)));
-    return { min, max, fallback };
-  }
-
-  function applyFilesWidth(width, { persist = false } = {}) {
-    const bounds = filesWidthBounds();
-    const next = Math.round(Math.min(bounds.max, Math.max(bounds.min, width)));
-    workspace.style.setProperty('--files-panel-width', `${next}px`);
-    elements.filesResizer.setAttribute('aria-valuemin', String(bounds.min));
-    elements.filesResizer.setAttribute('aria-valuemax', String(bounds.max));
-    elements.filesResizer.setAttribute('aria-valuenow', String(next));
-    document.body.dataset.filesPanelWidth = String(next);
-    if (persist) {
-      state.filesPreferredWidth = next;
-      state.filesWidthStored = true;
-      saveFilesWidth(next);
-    }
-    return next;
-  }
-
-  function finishFilesResize(pointerId = null) {
-    if (state.resizePointerId === null || (pointerId !== null && pointerId !== state.resizePointerId)) return;
-    try {
-      if (elements.filesResizer.hasPointerCapture(state.resizePointerId)) {
-        elements.filesResizer.releasePointerCapture(state.resizePointerId);
-      }
-    } catch {
-      // Synthetic test pointers may not own capture.
-    }
-    state.resizePointerId = null;
-    document.body.classList.remove('files-resizing');
-    applyFilesWidth(Number(elements.filesResizer.getAttribute('aria-valuenow')), { persist: true });
-  }
-
-  function initializeFilesResizer() {
-    const storedWidth = readFilesWidth();
-    state.filesWidthStored = storedWidth !== null;
-    state.filesPreferredWidth = storedWidth ?? filesWidthBounds().fallback;
-    applyFilesWidth(state.filesPreferredWidth);
-
-    elements.filesResizer.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || state.resizePointerId !== null) return;
-      event.preventDefault();
-      state.resizePointerId = event.pointerId;
-      state.resizeStartX = event.clientX;
-      state.resizeStartWidth = elements.filesPanel.getBoundingClientRect().width;
-      document.body.classList.add('files-resizing');
-      try {
-        elements.filesResizer.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic test pointers may not support capture.
-      }
-    });
-
-    elements.filesResizer.addEventListener('pointermove', (event) => {
-      if (event.pointerId !== state.resizePointerId) return;
-      applyFilesWidth(state.resizeStartWidth + state.resizeStartX - event.clientX);
-    });
-
-    elements.filesResizer.addEventListener('pointerup', (event) => finishFilesResize(event.pointerId));
-    elements.filesResizer.addEventListener('pointercancel', (event) => finishFilesResize(event.pointerId));
-    document.addEventListener('pointerup', (event) => finishFilesResize(event.pointerId), true);
-    document.addEventListener('pointercancel', (event) => finishFilesResize(event.pointerId), true);
-    elements.filesResizer.addEventListener('lostpointercapture', () => finishFilesResize());
-
-    elements.filesResizer.addEventListener('keydown', (event) => {
-      const bounds = filesWidthBounds();
-      const current = Number(elements.filesResizer.getAttribute('aria-valuenow')) || FILES_DEFAULT_WIDTH;
-      const step = event.shiftKey ? 40 : 16;
-      let next = current;
-      if (event.key === 'ArrowLeft') next += step;
-      else if (event.key === 'ArrowRight') next -= step;
-      else if (event.key === 'Home') next = bounds.min;
-      else if (event.key === 'End') next = bounds.max;
-      else return;
-      event.preventDefault();
-      applyFilesWidth(next, { persist: true });
-    });
-
-    window.addEventListener('resize', () => {
-      if (elements.filesPanel.hidden) return;
-      const width = state.filesWidthStored ? state.filesPreferredWidth : filesWidthBounds().fallback;
-      if (!state.filesWidthStored) state.filesPreferredWidth = width;
-      applyFilesWidth(width);
-    });
-  }
+  const filesResizer = createPanelResizer({
+    storageKey: FILES_WIDTH_KEY,
+    defaultWidth: FILES_DEFAULT_WIDTH,
+    minWidth: FILES_MIN_WIDTH,
+    terminalMinWidth: TERMINAL_MIN_WIDTH,
+    cssVariable: '--files-panel-width',
+    resizingBodyClass: 'files-resizing',
+    datasetWidthKey: 'filesPanelWidth',
+    panel: elements.filesPanel,
+    resizer: elements.filesResizer,
+    workspace: document.querySelector('.workspace'),
+    // Unlike the assistant panel, a hidden FILES panel must not reclaim
+    // width on a window resize while it's closed.
+    skipResizeWhenHidden: true
+  });
 
   function openFilesPanel() {
     if (elements.assistantPanel && !elements.assistantPanel.hidden) {
       document.getElementById('assistantClose')?.click();
     }
-    const width = state.filesWidthStored ? state.filesPreferredWidth : filesWidthBounds().fallback;
-    if (!state.filesWidthStored) state.filesPreferredWidth = width;
-    applyFilesWidth(width);
+    filesResizer.applyPreferredWidth();
     elements.filesPanel.hidden = false;
     elements.filesGroupToggle.setAttribute('aria-expanded', 'true');
     elements.filesGroupToggle.setAttribute('aria-pressed', 'true');
@@ -229,5 +116,5 @@
   }
 
   applyViewMode(readViewMode());
-  initializeFilesResizer();
+  filesResizer.initialize();
 })();

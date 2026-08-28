@@ -42,131 +42,21 @@
     activeRequestId: null,
     assistantMessage: null,
     sourceList: null,
-    settingsReturnFocus: null,
-    assistantPreferredWidth: null,
-    assistantWidthStored: false,
-    resizePointerId: null,
-    resizeStartX: 0,
-    resizeStartWidth: ASSISTANT_DEFAULT_WIDTH
+    settingsReturnFocus: null
   };
 
-  const workspace = document.querySelector('.workspace');
-
-  function readAssistantWidth() {
-    try {
-      const stored = Number.parseFloat(window.localStorage.getItem(ASSISTANT_WIDTH_KEY));
-      return Number.isFinite(stored) ? stored : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function saveAssistantWidth(width) {
-    try {
-      window.localStorage.setItem(ASSISTANT_WIDTH_KEY, String(Math.round(width)));
-    } catch {
-      // Layout persistence is optional when storage is unavailable.
-    }
-  }
-
-  function assistantWidthBounds() {
-    const workspaceWidth = workspace.clientWidth;
-    const overlayMode = window.matchMedia('(max-width: 1180px)').matches;
-    const telemetry = document.getElementById('telemetryPanel');
-    const telemetryWidth = !overlayMode && telemetry && getComputedStyle(telemetry).display !== 'none'
-      ? telemetry.getBoundingClientRect().width
-      : 0;
-    const reservedGaps = overlayMode ? 14 : 28;
-    const terminalMinWidth = overlayMode ? 300 : TERMINAL_MIN_WIDTH;
-    const sharedWidth = workspaceWidth - telemetryWidth - reservedGaps;
-    const available = sharedWidth - terminalMinWidth;
-    const max = Math.max(ASSISTANT_MIN_WIDTH, Math.min(720, Math.floor(available)));
-    const min = Math.min(ASSISTANT_MIN_WIDTH, max);
-    const fallback = Math.round(Math.min(max, Math.max(min, sharedWidth / 2)));
-    return { min, max, fallback };
-  }
-
-  function applyAssistantWidth(width, { persist = false } = {}) {
-    const bounds = assistantWidthBounds();
-    const next = Math.round(Math.min(bounds.max, Math.max(bounds.min, width)));
-    workspace.style.setProperty('--assistant-panel-width', `${next}px`);
-    elements.assistantResizer.setAttribute('aria-valuemin', String(bounds.min));
-    elements.assistantResizer.setAttribute('aria-valuemax', String(bounds.max));
-    elements.assistantResizer.setAttribute('aria-valuenow', String(next));
-    document.body.dataset.assistantPanelWidth = String(next);
-    if (persist) {
-      state.assistantPreferredWidth = next;
-      state.assistantWidthStored = true;
-      saveAssistantWidth(next);
-    }
-    return next;
-  }
-
-  function finishAssistantResize(pointerId = null) {
-    if (state.resizePointerId === null || (pointerId !== null && pointerId !== state.resizePointerId)) return;
-    try {
-      if (elements.assistantResizer.hasPointerCapture(state.resizePointerId)) {
-        elements.assistantResizer.releasePointerCapture(state.resizePointerId);
-      }
-    } catch {
-      // Synthetic test pointers may not own capture.
-    }
-    state.resizePointerId = null;
-    document.body.classList.remove('assistant-resizing');
-    applyAssistantWidth(Number(elements.assistantResizer.getAttribute('aria-valuenow')), { persist: true });
-  }
-
-  function initializeAssistantResizer() {
-    const storedWidth = readAssistantWidth();
-    state.assistantWidthStored = storedWidth !== null;
-    state.assistantPreferredWidth = storedWidth ?? assistantWidthBounds().fallback;
-    applyAssistantWidth(state.assistantPreferredWidth);
-
-    elements.assistantResizer.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || state.resizePointerId !== null) return;
-      event.preventDefault();
-      state.resizePointerId = event.pointerId;
-      state.resizeStartX = event.clientX;
-      state.resizeStartWidth = elements.assistantPanel.getBoundingClientRect().width;
-      document.body.classList.add('assistant-resizing');
-      try {
-        elements.assistantResizer.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic test pointers may not support capture.
-      }
-    });
-
-    elements.assistantResizer.addEventListener('pointermove', (event) => {
-      if (event.pointerId !== state.resizePointerId) return;
-      applyAssistantWidth(state.resizeStartWidth + state.resizeStartX - event.clientX);
-    });
-
-    elements.assistantResizer.addEventListener('pointerup', (event) => finishAssistantResize(event.pointerId));
-    elements.assistantResizer.addEventListener('pointercancel', (event) => finishAssistantResize(event.pointerId));
-    document.addEventListener('pointerup', (event) => finishAssistantResize(event.pointerId), true);
-    document.addEventListener('pointercancel', (event) => finishAssistantResize(event.pointerId), true);
-    elements.assistantResizer.addEventListener('lostpointercapture', () => finishAssistantResize());
-
-    elements.assistantResizer.addEventListener('keydown', (event) => {
-      const bounds = assistantWidthBounds();
-      const current = Number(elements.assistantResizer.getAttribute('aria-valuenow')) || ASSISTANT_DEFAULT_WIDTH;
-      const step = event.shiftKey ? 40 : 16;
-      let next = current;
-      if (event.key === 'ArrowLeft') next += step;
-      else if (event.key === 'ArrowRight') next -= step;
-      else if (event.key === 'Home') next = bounds.min;
-      else if (event.key === 'End') next = bounds.max;
-      else return;
-      event.preventDefault();
-      applyAssistantWidth(next, { persist: true });
-    });
-
-    window.addEventListener('resize', () => {
-      const width = state.assistantWidthStored ? state.assistantPreferredWidth : assistantWidthBounds().fallback;
-      if (!state.assistantWidthStored) state.assistantPreferredWidth = width;
-      applyAssistantWidth(width);
-    });
-  }
+  const assistantResizer = createPanelResizer({
+    storageKey: ASSISTANT_WIDTH_KEY,
+    defaultWidth: ASSISTANT_DEFAULT_WIDTH,
+    minWidth: ASSISTANT_MIN_WIDTH,
+    terminalMinWidth: TERMINAL_MIN_WIDTH,
+    cssVariable: '--assistant-panel-width',
+    resizingBodyClass: 'assistant-resizing',
+    datasetWidthKey: 'assistantPanelWidth',
+    panel: elements.assistantPanel,
+    resizer: elements.assistantResizer,
+    workspace: document.querySelector('.workspace')
+  });
 
   function newId(prefix) {
     const suffix = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -279,9 +169,7 @@
   }
 
   function openAssistant() {
-    const width = state.assistantWidthStored ? state.assistantPreferredWidth : assistantWidthBounds().fallback;
-    if (!state.assistantWidthStored) state.assistantPreferredWidth = width;
-    applyAssistantWidth(width);
+    assistantResizer.applyPreferredWidth();
     elements.assistantPanel.hidden = false;
     elements.assistantToggle.setAttribute('aria-expanded', 'true');
     document.body.dataset.assistantPanelOpen = 'true';
@@ -556,6 +444,6 @@
   });
 
   window.assistantApi.onEvent(handleAssistantEvent);
-  initializeAssistantResizer();
+  assistantResizer.initialize();
   loadSettings();
 })();
