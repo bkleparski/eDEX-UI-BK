@@ -712,7 +712,7 @@ function runVisualTest(window, context) {
             || !diagnostics.fileBrowserDragStarted) {
             throw new Error('FILE SYSTEM drag/drop did not use the shared shell-quoting and active-session route');
           }
-          if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 6
+          if (!diagnostics.systemGroupOn || !diagnostics.filesGroupOn || diagnostics.shortcutCount !== 7
             || diagnostics.systemToggleCount !== 2 || diagnostics.filesToggleCount !== 3
             || diagnostics.scanlinesToggleCount < 3 || diagnostics.scanlinesEnabled
             || diagnostics.soundToggleCount < 3 || diagnostics.soundEnabled) {
@@ -824,6 +824,81 @@ function runVisualTest(window, context) {
             || connectionViewDiagnostics.restoredTitle !== 'TOP PROCESSES'
             || connectionViewDiagnostics.restoredProcessListHidden || !connectionViewDiagnostics.restoredConnectionsListHidden) {
             throw new Error('CONNECTIONS view toggle did not switch panels/title correctly or restore PROC view');
+          }
+
+          // KEYBOARD toggle: the footer's grid row switches 40px -> auto to
+          // fit the on-screen keyboard, which shrinks the terminal panel by
+          // the same amount — check it grows, the terminal stays usable, and
+          // the toggle restores the original 40px footer on the way back off.
+          const keyboardToggleDiagnostics = await window.webContents.executeJavaScript(`(async () => {
+            const activeScreenRect = () => document.querySelector('.terminal-tab-view:not([hidden]) .terminal-instance.is-active-pane .xterm-screen').getBoundingClientRect();
+            const footerHeight = () => document.querySelector('.bottom-hud').getBoundingClientRect().height;
+            const result = { footerBefore: footerHeight() };
+            document.getElementById('keyboardToggle').click();
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            result.footerAfter = footerHeight();
+            result.keyboardVisible = !document.getElementById('onscreenKeyboard').hidden;
+            const afterRect = activeScreenRect();
+            result.terminalAfterWidth = afterRect.width;
+            result.terminalAfterHeight = afterRect.height;
+
+            const isPressed = (code) => document.querySelector(\`#onscreenKeyboard [data-code="\${code}"]\`).classList.contains('is-pressed');
+            const dispatch = (type, code, metaKey = false) => document.dispatchEvent(new KeyboardEvent(type, { code, metaKey, bubbles: true, cancelable: true }));
+
+            // Plain keydown -> keyup: the key lights up, then clears immediately.
+            dispatch('keydown', 'KeyA');
+            result.keyAPressedAfterKeydown = isPressed('KeyA');
+
+            const keyboardRect = document.getElementById('onscreenKeyboard').getBoundingClientRect();
+            result.keyboardRect = {
+              x: Math.round(keyboardRect.left), y: Math.round(keyboardRect.top),
+              width: Math.round(keyboardRect.width), height: Math.round(keyboardRect.height)
+            };
+            return result;
+          })()`);
+          // Crop while KeyA is still lit — the most informative single frame:
+          // full row layout plus a live highlight, shot before the keyup
+          // below clears it.
+          if (keyboardToggleDiagnostics.keyboardVisible && keyboardToggleDiagnostics.keyboardRect) {
+            const keyboardShotPath = path.join(os.tmpdir(), 'edex-ui-bk-onscreen-keyboard.png');
+            fs.writeFileSync(keyboardShotPath, (await window.webContents.capturePage(keyboardToggleDiagnostics.keyboardRect)).toPNG());
+            console.log(`On-screen keyboard screenshot: ${keyboardShotPath}`);
+          }
+          const keyboardCloseDiagnostics = await window.webContents.executeJavaScript(`(async () => {
+            const isPressed = (code) => document.querySelector(\`#onscreenKeyboard [data-code="\${code}"]\`).classList.contains('is-pressed');
+            const dispatch = (type, code, metaKey = false) => document.dispatchEvent(new KeyboardEvent(type, { code, metaKey, bubbles: true, cancelable: true }));
+            const footerHeight = () => document.querySelector('.bottom-hud').getBoundingClientRect().height;
+            const result = {};
+
+            dispatch('keyup', 'KeyA');
+            result.keyAPressedAfterKeyup = isPressed('KeyA');
+
+            // Cmd+C with NO matching keyup — macOS can swallow it entirely for a
+            // chorded key, so the only way the highlight ever clears is the
+            // ~1s safety-net timer in handleKeyboardVisualizerKeydown.
+            dispatch('keydown', 'KeyC', true);
+            result.keyCPressedAfterChordedKeydown = isPressed('KeyC');
+            await new Promise((resolve) => setTimeout(resolve, 1_300));
+            result.keyCPressedAfterSafetyTimeout = isPressed('KeyC');
+
+            document.getElementById('keyboardToggle').click();
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            result.footerRestored = footerHeight();
+            result.keyboardHiddenAfterRestore = document.getElementById('onscreenKeyboard').hidden;
+            return result;
+          })()`);
+          Object.assign(keyboardToggleDiagnostics, keyboardCloseDiagnostics);
+          if (!keyboardToggleDiagnostics.keyboardVisible
+            || keyboardToggleDiagnostics.footerAfter < keyboardToggleDiagnostics.footerBefore + 60
+            || keyboardToggleDiagnostics.terminalAfterWidth < minimumVisualTerminalWidthWithFilesPanel
+            || keyboardToggleDiagnostics.terminalAfterHeight < 100
+            || Math.abs(keyboardToggleDiagnostics.footerRestored - keyboardToggleDiagnostics.footerBefore) > 2
+            || !keyboardToggleDiagnostics.keyboardHiddenAfterRestore) {
+            throw new Error('Keyboard toggle did not grow the footer, keep the terminal usable, or restore cleanly');
+          }
+          if (!keyboardToggleDiagnostics.keyAPressedAfterKeydown || keyboardToggleDiagnostics.keyAPressedAfterKeyup
+            || !keyboardToggleDiagnostics.keyCPressedAfterChordedKeydown || keyboardToggleDiagnostics.keyCPressedAfterSafetyTimeout) {
+            throw new Error('Key highlight did not light on keydown, clear on keyup, or self-clear after a ⌘-chorded keydown with no keyup');
           }
           const screenshotPath = path.join(
             os.tmpdir(),

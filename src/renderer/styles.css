@@ -124,6 +124,15 @@ button {
   min-height: 0;
 }
 
+/* The bottom row is a fixed 40px everywhere else — this is the one state
+   where the footer needs to grow to fit the on-screen keyboard underneath
+   its usual content row. `auto` lets the row track size itself to whatever
+   .bottom-hud actually contains instead of a second hardcoded pixel value
+   that would have to be kept in sync with the keyboard's own height. */
+body.keyboard-on .app-shell {
+  grid-template-rows: 58px minmax(0, 1fr) auto;
+}
+
 .panel {
   position: relative;
   min-width: 0;
@@ -1109,6 +1118,90 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   transform: translateY(1px);
 }
 
+/* .bottom-hud__content normally stretches to 100% of .bottom-hud (a fixed
+   40px grid row everywhere else). Once the keyboard grows that row to
+   `auto`, a 100%-height child would try to claim the whole thing instead of
+   leaving room below it — pin it back to its usual visual height so the
+   keyboard has a definite block of space under it, not a fight over 100%. */
+body.keyboard-on .bottom-hud__content {
+  height: 40px;
+}
+
+.onscreen-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 18px 8px;
+}
+
+.kb-row {
+  display: flex;
+  gap: 3px;
+  height: 20px;
+}
+
+.kb-key {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .32);
+  border-radius: 2px;
+  color: var(--text-secondary);
+  background: rgb(var(--cyan-rgb) / .03);
+  font-family: var(--font-hud-label);
+  font-size: 8px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  user-select: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.kb-key--wide {
+  flex: 1.5 1 0;
+}
+
+.kb-key--enter {
+  flex: 1.9 1 0;
+}
+
+.kb-key--shift {
+  flex: 2.1 1 0;
+}
+
+.kb-key--mod {
+  flex: 1.3 1 0;
+}
+
+.kb-key--space {
+  flex: 6 1 0;
+}
+
+.kb-key--arrow {
+  flex: 0.9 1 0;
+}
+
+.kb-arrow-stack {
+  display: flex;
+  flex: 0.9 1 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kb-key--arrow-half {
+  flex: 1 1 0;
+  font-size: 6px;
+}
+
+.kb-key.is-pressed {
+  color: var(--text-bright);
+  background: rgb(var(--cyan-rgb) / .22);
+  border-color: rgb(var(--cyan-bright-rgb) / .85);
+  box-shadow: 0 0 6px rgb(var(--cyan-rgb) / .55);
+  text-shadow: var(--glow-label);
+}
+
 .boot-overlay {
   background: transparent;
 }
@@ -1217,7 +1310,8 @@ body.booting .boot-content--bottom {
   }
 
   .shortcut-legend > span:nth-child(4),
-  .shortcut-legend > span:nth-child(5) {
+  .shortcut-legend > span:nth-child(5),
+  .shortcut-legend > span:nth-child(7) {
     display: none;
   }
 }

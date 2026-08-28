@@ -22,7 +22,8 @@
 const storageKeys = Object.freeze({
   skipBoot: 'edex-ui-bk.skipBoot',
   scanlines: 'edex-ui-bk.scanlines',
-  sound: 'edex-ui-bk.sound'
+  sound: 'edex-ui-bk.sound',
+  keyboard: 'edex-ui-bk.keyboard'
 });
 
 const terminalTheme = Object.freeze({
@@ -443,6 +444,65 @@ function toggleScanlines() {
   focusTerminal();
 }
 
+const keyClearTimers = new Map();
+
+function setKeyVisualPressed(code, pressed) {
+  const keyElement = document.querySelector(`#onscreenKeyboard [data-code="${code}"]`);
+  if (keyElement) keyElement.classList.toggle('is-pressed', pressed);
+}
+
+function clearAllKeyVisuals() {
+  for (const timer of keyClearTimers.values()) clearTimeout(timer);
+  keyClearTimers.clear();
+  document.querySelectorAll('#onscreenKeyboard .kb-key.is-pressed').forEach((keyElement) => {
+    keyElement.classList.remove('is-pressed');
+  });
+}
+
+// Purely visual — never reads event.key/preventDefault/stopPropagation, so it
+// can't intercept or alter a single keystroke elsewhere in the app. macOS
+// can drop the keyup for a key chorded with ⌘ (the app never sees it), so
+// every lit key also gets a ~1s safety-net timer as a second way to clear.
+function handleKeyboardVisualizerKeydown(event) {
+  if (!document.body.classList.contains('keyboard-on') || !event.code) return;
+  setKeyVisualPressed(event.code, true);
+  clearTimeout(keyClearTimers.get(event.code));
+  keyClearTimers.set(event.code, setTimeout(() => {
+    setKeyVisualPressed(event.code, false);
+    keyClearTimers.delete(event.code);
+  }, 1_000));
+}
+
+function handleKeyboardVisualizerKeyup(event) {
+  if (!event.code) return;
+  clearTimeout(keyClearTimers.get(event.code));
+  keyClearTimers.delete(event.code);
+  setKeyVisualPressed(event.code, false);
+}
+
+function updateKeyboard(enabled) {
+  document.body.dataset.keyboardToggleCount = String((Number(document.body.dataset.keyboardToggleCount) || 0) + 1);
+  document.body.classList.toggle('keyboard-on', enabled);
+  document.getElementById('onscreenKeyboard').hidden = !enabled;
+  document.getElementById('onscreenKeyboard').setAttribute('aria-hidden', String(!enabled));
+  document.getElementById('keyboardState').textContent = enabled ? 'ON' : 'OFF';
+  const toggle = document.getElementById('keyboardToggle');
+  toggle.setAttribute('aria-pressed', String(enabled));
+  toggle.setAttribute('aria-expanded', String(enabled));
+  toggle.classList.toggle('is-on', enabled);
+  writeSetting(storageKeys.keyboard, enabled);
+  if (!enabled) clearAllKeyVisuals();
+  // The footer's grid row height changes (40px <-> auto), which reshapes the
+  // terminal panel beneath it — refit explicitly rather than trust the pane
+  // ResizeObserver to catch a grid-track change on the very next frame.
+  fitActiveTerminal();
+}
+
+function toggleKeyboard() {
+  updateKeyboard(!document.body.classList.contains('keyboard-on'));
+  focusTerminal();
+}
+
 function recordSystemVisibilityState(visible) {
   document.body.dataset.dataVisibilityState = visible ? 'system-visible' : 'system-hidden';
   if (!isVisualTest) return;
@@ -488,9 +548,14 @@ function toggleSystemGroup() {
 function initializeControls() {
   updateScanlines(readSetting(storageKeys.scanlines));
   updateSound(soundEnabled, false);
+  updateKeyboard(readSetting(storageKeys.keyboard));
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
+  document.getElementById('keyboardToggle').addEventListener('click', toggleKeyboard);
   document.getElementById('systemGroupToggle').addEventListener('click', toggleSystemGroup);
+  document.addEventListener('keydown', handleKeyboardVisualizerKeydown, true);
+  document.addEventListener('keyup', handleKeyboardVisualizerKeyup, true);
+  window.addEventListener('blur', clearAllKeyVisuals);
   initializeProcessSort();
   initializeProcessView();
   initializeTerminalSearch();
@@ -569,6 +634,12 @@ function initializeControls() {
       event.preventDefault();
       event.stopPropagation();
       toggleSound();
+      return;
+    }
+    if (event.shiftKey && event.code === 'KeyK') {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleKeyboard();
       return;
     }
     if (event.shiftKey && event.code === 'Period'

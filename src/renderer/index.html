@@ -377,12 +377,92 @@
             <span><kbd>⇧⌘L</kbd> SCAN</span>
             <span><kbd>⇧⌘S</kbd> AUDIO</span>
             <span><kbd>⌘T</kbd> TTY</span>
+            <span><kbd>⇧⌘K</kbd> KEYS</span>
           </div>
           <div class="status-chips" aria-label="Stan interfejsu">
             <button class="status-chip hud-label is-on" id="systemGroupToggle" type="button" aria-pressed="true">SYSTEM <span id="systemGroupState">ON</span></button>
             <button class="status-chip hud-label" id="filesGroupToggle" type="button" aria-controls="filesPanel" aria-expanded="false" aria-pressed="false">FILES <span id="filesGroupState">OFF</span></button>
             <button class="status-chip hud-label" id="scanlinesToggle" type="button" aria-pressed="false">SCANLINES <span id="scanlinesState">OFF</span></button>
             <button class="status-chip hud-label" id="soundToggle" type="button" aria-pressed="false">SOUND <span id="soundState">OFF</span></button>
+            <button class="status-chip hud-label" id="keyboardToggle" type="button" aria-controls="onscreenKeyboard" aria-expanded="false" aria-pressed="false">KEYBOARD <span id="keyboardState">OFF</span></button>
+          </div>
+        </div>
+        <div class="onscreen-keyboard" id="onscreenKeyboard" aria-hidden="true" hidden>
+          <div class="kb-row">
+            <span class="kb-key" data-code="Backquote">`</span>
+            <span class="kb-key" data-code="Digit1">1</span>
+            <span class="kb-key" data-code="Digit2">2</span>
+            <span class="kb-key" data-code="Digit3">3</span>
+            <span class="kb-key" data-code="Digit4">4</span>
+            <span class="kb-key" data-code="Digit5">5</span>
+            <span class="kb-key" data-code="Digit6">6</span>
+            <span class="kb-key" data-code="Digit7">7</span>
+            <span class="kb-key" data-code="Digit8">8</span>
+            <span class="kb-key" data-code="Digit9">9</span>
+            <span class="kb-key" data-code="Digit0">0</span>
+            <span class="kb-key" data-code="Minus">-</span>
+            <span class="kb-key" data-code="Equal">=</span>
+            <span class="kb-key kb-key--wide" data-code="Backspace">⌫</span>
+          </div>
+          <div class="kb-row">
+            <span class="kb-key kb-key--wide" data-code="Tab">tab</span>
+            <span class="kb-key" data-code="KeyQ">Q</span>
+            <span class="kb-key" data-code="KeyW">W</span>
+            <span class="kb-key" data-code="KeyE">E</span>
+            <span class="kb-key" data-code="KeyR">R</span>
+            <span class="kb-key" data-code="KeyT">T</span>
+            <span class="kb-key" data-code="KeyY">Y</span>
+            <span class="kb-key" data-code="KeyU">U</span>
+            <span class="kb-key" data-code="KeyI">I</span>
+            <span class="kb-key" data-code="KeyO">O</span>
+            <span class="kb-key" data-code="KeyP">P</span>
+            <span class="kb-key" data-code="BracketLeft">[</span>
+            <span class="kb-key" data-code="BracketRight">]</span>
+            <span class="kb-key kb-key--wide" data-code="Backslash">\</span>
+          </div>
+          <div class="kb-row">
+            <span class="kb-key kb-key--wide" data-code="CapsLock">caps</span>
+            <span class="kb-key" data-code="KeyA">A</span>
+            <span class="kb-key" data-code="KeyS">S</span>
+            <span class="kb-key" data-code="KeyD">D</span>
+            <span class="kb-key" data-code="KeyF">F</span>
+            <span class="kb-key" data-code="KeyG">G</span>
+            <span class="kb-key" data-code="KeyH">H</span>
+            <span class="kb-key" data-code="KeyJ">J</span>
+            <span class="kb-key" data-code="KeyK">K</span>
+            <span class="kb-key" data-code="KeyL">L</span>
+            <span class="kb-key" data-code="Semicolon">;</span>
+            <span class="kb-key" data-code="Quote">'</span>
+            <span class="kb-key kb-key--enter" data-code="Enter">return</span>
+          </div>
+          <div class="kb-row">
+            <span class="kb-key kb-key--shift" data-code="ShiftLeft">shift</span>
+            <span class="kb-key" data-code="KeyZ">Z</span>
+            <span class="kb-key" data-code="KeyX">X</span>
+            <span class="kb-key" data-code="KeyC">C</span>
+            <span class="kb-key" data-code="KeyV">V</span>
+            <span class="kb-key" data-code="KeyB">B</span>
+            <span class="kb-key" data-code="KeyN">N</span>
+            <span class="kb-key" data-code="KeyM">M</span>
+            <span class="kb-key" data-code="Comma">,</span>
+            <span class="kb-key" data-code="Period">.</span>
+            <span class="kb-key" data-code="Slash">/</span>
+            <span class="kb-key kb-key--shift" data-code="ShiftRight">shift</span>
+          </div>
+          <div class="kb-row kb-row--mods">
+            <span class="kb-key kb-key--mod" data-code="Fn">fn</span>
+            <span class="kb-key kb-key--mod" data-code="ControlLeft">ctrl</span>
+            <span class="kb-key kb-key--mod" data-code="AltLeft">opt</span>
+            <span class="kb-key kb-key--mod" data-code="MetaLeft">⌘</span>
+            <span class="kb-key kb-key--space" data-code="Space"></span>
+            <span class="kb-key kb-key--mod" data-code="MetaRight">⌘</span>
+            <span class="kb-key kb-key--mod" data-code="AltRight">opt</span>
+            <span class="kb-key kb-key--arrow" data-code="ArrowLeft">←</span>
+            <span class="kb-arrow-stack">
+              <span class="kb-key kb-key--arrow-half" data-code="ArrowUp">↑</span>
+              <span class="kb-key kb-key--arrow-half" data-code="ArrowDown">↓</span>
+            </span>
+            <span class="kb-key kb-key--arrow" data-code="ArrowRight">→</span>
           </div>
         </div>
       </footer>
