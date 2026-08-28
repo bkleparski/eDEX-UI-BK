@@ -62,7 +62,7 @@ function runAssistantVisualTest(window) {
                   initialTerminalScreenWidth,
                   fallbackStoredAbsent,
                   shortcutVisible: [...document.querySelectorAll('.shortcut-legend span')]
-                    .some((item) => item.textContent.replace(/\s+/g, ' ').trim() === '⌘3 AI'
+                    .some((item) => item.textContent.replace(/\\s+/g, ' ').trim() === '⌘3 AI'
                       && getComputedStyle(item).display !== 'none'),
                   dragWidth,
                   keyboardWidth: panel.getBoundingClientRect().width,
