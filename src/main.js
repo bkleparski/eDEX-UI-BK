@@ -17,6 +17,7 @@ const { OpenCodeGoProvider } = require('./main/assistant/opencode-go-provider');
 const { OpenRouterProvider } = require('./main/assistant/openrouter-provider');
 const { ProviderRegistry } = require('./main/assistant/provider-registry');
 const { ConfigStore } = require('./main/config-store');
+const { CUSTOM_THEME_ID_PREFIX, validateThemeFile } = require('./main/theme-file-validator');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
@@ -68,6 +69,14 @@ const PUBLIC_IP_ENDPOINT = 'https://api.ipify.org';
 const MAX_TERMINALS_PER_WINDOW = 8;
 const MAX_FILE_ENTRIES = 80;
 const MAX_BATCH_ENTRIES = 200;
+const THEMES_DIR_NAME = 'themes';
+const MAX_THEME_FILES = 50;
+const EXAMPLE_THEME_FILE_NAME = 'example-theme.json';
+const EXAMPLE_THEME_CONTENT = {
+  name: 'RINZLER',
+  accent: { cyan: [210, 20, 20], cyanBright: [255, 130, 110], cyanDim: [110, 10, 10] },
+  terminalColor: { foreground: [255, 90, 70], cursor: [255, 170, 140] }
+};
 const IMAGE_PREVIEW_MAX_BYTES = 15 * 1024 * 1024;
 const IMAGE_PREVIEW_MAX_SOURCE_DIMENSION = 480;
 const IMAGE_PREVIEW_CACHE_LIMIT = 24;
@@ -1344,6 +1353,77 @@ function requireConfiguredCloudProvider(provider, config) {
   }
 }
 
+function themesDirectory() {
+  return path.join(app.getPath('userData'), THEMES_DIR_NAME);
+}
+
+// Runs once at startup. Only seeds the example file the very first time the
+// directory itself is created — a user who deletes the example later isn't
+// fighting the app recreating it on every launch.
+function ensureThemesDirectory() {
+  const directory = themesDirectory();
+  if (fs.existsSync(directory)) return;
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, EXAMPLE_THEME_FILE_NAME),
+      `${JSON.stringify(EXAMPLE_THEME_CONTENT, null, 2)}\n`,
+      'utf8'
+    );
+  } catch (error) {
+    console.error(`Could not create themes directory: ${error.message}`);
+  }
+}
+
+// The theme's own `name` is free text (any script, spaces) and isn't unique,
+// so the persisted id — the string that ends up in localStorage and has to
+// survive a rename/retitle — comes from the filename instead.
+function sanitizeThemeIdStem(fileName) {
+  const stem = path.basename(fileName, path.extname(fileName));
+  const cleaned = stem.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
+  return cleaned || 'theme';
+}
+
+// Re-reads the directory from disk on every call — the file set is tiny
+// (MAX_THEME_FILES caps it) and local, so there's no cache to keep in sync
+// and a file dropped in while the app is running is picked up on request.
+// A malformed file is skipped with a warning; it never takes the app down.
+function readCustomThemes() {
+  const directory = themesDirectory();
+  let entries;
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const themes = [];
+  for (const entry of entries) {
+    if (themes.length >= MAX_THEME_FILES) break;
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.json')) continue;
+    const filePath = path.join(directory, entry.name);
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const validated = validateThemeFile(parsed);
+      if (!validated) {
+        console.warn(`Skipping invalid theme file: ${entry.name}`);
+        continue;
+      }
+      themes.push({ id: `${CUSTOM_THEME_ID_PREFIX}${sanitizeThemeIdStem(entry.name)}`, ...validated });
+    } catch (error) {
+      console.warn(`Skipping unreadable theme file ${entry.name}: ${error.message}`);
+    }
+  }
+  return themes;
+}
+
+function registerThemesIpc() {
+  ipcMain.handle('themes:list-custom', (event) => {
+    requireTrustedSender(event);
+    return readCustomThemes();
+  });
+}
+
 function registerAssistantIpc() {
   ipcMain.handle('settings:get', (event) => {
     requireTrustedSender(event);
@@ -1524,6 +1604,7 @@ function migrateLegacyUserData() {
 
 app.whenReady().then(async () => {
   migrateLegacyUserData();
+  ensureThemesDirectory();
   configStore = new ConfigStore(app.getPath('userData'));
   providerRegistry = new ProviderRegistry([new OllamaProvider(), new LMStudioProvider()]);
   configureCloudProviders();
@@ -1538,6 +1619,7 @@ app.whenReady().then(async () => {
   registerFilesIpc();
   registerMonitoringIpc();
   registerAssistantIpc();
+  registerThemesIpc();
   createWindow();
 
   app.on('activate', () => {

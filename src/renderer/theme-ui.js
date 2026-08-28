@@ -38,17 +38,29 @@
     return button;
   }
 
-  for (const accent of themeApi.accents) {
-    elements.themeAccents.append(swatchButton({
-      id: accent.id, label: accent.label, color: accent.swatch, group: 'accent'
-    }));
+  // Custom themes (userData/themes/*.json) load over IPC and can arrive
+  // after this script's first pass, so the swatch grids are rebuilt from
+  // scratch rather than populated once — see themeApi.onCatalogChange below.
+  function renderAccentSwatches() {
+    elements.themeAccents.replaceChildren();
+    for (const accent of themeApi.accents) {
+      elements.themeAccents.append(swatchButton({
+        id: accent.id, label: accent.label, color: accent.swatch, group: 'accent'
+      }));
+    }
   }
 
-  for (const color of themeApi.terminalColors) {
-    elements.themeTerminalColors.append(swatchButton({
-      id: color.id, label: color.label, color: color.foreground, group: 'terminalColor'
-    }));
+  function renderTerminalColorSwatches() {
+    elements.themeTerminalColors.replaceChildren();
+    for (const color of themeApi.terminalColors) {
+      elements.themeTerminalColors.append(swatchButton({
+        id: color.id, label: color.label, color: color.foreground, group: 'terminalColor'
+      }));
+    }
   }
+
+  renderAccentSwatches();
+  renderTerminalColorSwatches();
 
   for (const font of themeApi.terminalFonts) {
     elements.themeFont.add(new Option(font.label, font.id));
@@ -129,6 +141,15 @@
 
   // Keep the controls truthful when the theme is changed from anywhere else.
   themeApi.onChange(() => syncControls());
+
+  // Custom themes finished loading (or a repaint happened because the
+  // stored theme referenced one of them) — rebuild the swatch grids so they
+  // show up, then re-sync so the right swatch is marked checked.
+  themeApi.onCatalogChange(() => {
+    renderAccentSwatches();
+    renderTerminalColorSwatches();
+    syncControls();
+  });
 
   syncControls();
 })();

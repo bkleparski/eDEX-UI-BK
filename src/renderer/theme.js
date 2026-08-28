@@ -7,6 +7,12 @@
   terminalFontById
 */
 
+// Custom themes (see themes/example-theme.json in userData) load over IPC,
+// which is async — everything below that touches them is written so a
+// preset id from localStorage survives the gap between "renderer boots" and
+// "the custom theme list actually arrives" instead of getting silently
+// downgraded to cyan and then persisted that way on the next save.
+
 // Appearance layer for EBARTNET-UI.
 //
 // The whole HUD is painted from a handful of CSS custom properties declared in
@@ -125,25 +131,49 @@ const DEFAULT_THEME = Object.freeze({
   terminalScrollback: 10_000
 });
 
+// Populated asynchronously by loadCustomThemes() below. accentById/
+// terminalColorById search these alongside the built-ins on every call —
+// the arrays are tiny, so re-concatenating is cheaper than the bookkeeping
+// a separately-maintained merged array would need.
+const CUSTOM_THEME_ID_PREFIX = 'CUSTOM:';
+const customAccents = [];
+const customTerminalColors = [];
+const catalogListeners = new Set();
+
 function accentById(id) {
-  return HUD_ACCENTS.find((item) => item.id === id) || HUD_ACCENTS[0];
+  return [...HUD_ACCENTS, ...customAccents].find((item) => item.id === id) || HUD_ACCENTS[0];
 }
 
 function terminalColorById(id) {
-  return TERMINAL_COLORS.find((item) => item.id === id) || TERMINAL_COLORS[0];
+  return [...TERMINAL_COLORS, ...customTerminalColors].find((item) => item.id === id) || TERMINAL_COLORS[0];
 }
 
 function terminalFontById(id) {
   return TERMINAL_FONTS.find((item) => item.id === id) || TERMINAL_FONTS[0];
 }
 
+// A custom id that hasn't loaded yet (still mid-IPC-round-trip at boot, or
+// its file was deleted) isn't "invalid" the way a garbage string is — it's
+// pending or orphaned. Either way the id itself is preserved rather than
+// collapsed to the default, so accentById's built-in fallback only affects
+// what gets *rendered* right now, never what's *stored*. See loadCustomThemes.
+function isPlausibleId(id, catalog) {
+  if (typeof id !== 'string') return false;
+  if (catalog.some((item) => item.id === id)) return true;
+  return id.startsWith(CUSTOM_THEME_ID_PREFIX) && id.length <= 64;
+}
+
 function normalizeTheme(value) {
   const source = value && typeof value === 'object' ? value : {};
   const size = Number(source.terminalFontSize);
   const scrollback = Number(source.terminalScrollback);
+  const accentCatalog = [...HUD_ACCENTS, ...customAccents];
+  const terminalColorCatalog = [...TERMINAL_COLORS, ...customTerminalColors];
   return {
-    accent: accentById(source.accent).id,
-    terminalColor: terminalColorById(source.terminalColor).id,
+    accent: isPlausibleId(source.accent, accentCatalog) ? source.accent : DEFAULT_THEME.accent,
+    terminalColor: isPlausibleId(source.terminalColor, terminalColorCatalog)
+      ? source.terminalColor
+      : DEFAULT_THEME.terminalColor,
     terminalFont: terminalFontById(source.terminalFont).id,
     terminalFontSize: FONT_SIZES.includes(size) ? size : DEFAULT_THEME.terminalFontSize,
     terminalScrollback: SCROLLBACK_SIZES.includes(scrollback) ? scrollback : DEFAULT_THEME.terminalScrollback
@@ -207,9 +237,49 @@ function applyTheme(theme, { persist = true, notify = true } = {}) {
   return currentTheme;
 }
 
+function notifyCatalogChange() {
+  for (const listener of catalogListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.error('Theme catalog listener failed:', error);
+    }
+  }
+}
+
+function registerCustomThemeFile(file) {
+  const label = `${CUSTOM_THEME_ID_PREFIX} ${file.name}`;
+  customAccents.push({ id: file.id, label, swatch: file.tokens['--cyan'], tokens: file.tokens });
+  customTerminalColors.push({
+    id: file.id, label, foreground: file.terminalColor.foreground, cursor: file.terminalColor.cursor
+  });
+}
+
+// Fire-and-forget from the bottom of this file: the boot paint above never
+// waits on this, so there's no flash-of-blocking-UI while userData/themes
+// is read. If the currently-applied theme referenced a custom preset that
+// just became available (or came back after being missing), repaint with
+// its real colour instead of the cyan it booted with.
+async function loadCustomThemes() {
+  let files;
+  try {
+    files = await window.themesApi?.listCustom();
+  } catch (error) {
+    console.error('Could not load custom themes:', error);
+    return;
+  }
+  if (!Array.isArray(files) || files.length === 0) return;
+  for (const file of files) registerCustomThemeFile(file);
+  notifyCatalogChange();
+  if (customAccents.some((item) => item.id === currentTheme.accent)
+    || customTerminalColors.some((item) => item.id === currentTheme.terminalColor)) {
+    applyTheme(currentTheme, { persist: false, notify: true });
+  }
+}
+
 window.themeApi = Object.freeze({
-  accents: HUD_ACCENTS,
-  terminalColors: TERMINAL_COLORS,
+  get accents() { return [...HUD_ACCENTS, ...customAccents]; },
+  get terminalColors() { return [...TERMINAL_COLORS, ...customTerminalColors]; },
   terminalFonts: TERMINAL_FONTS,
   fontSizes: FONT_SIZES,
   scrollbackSizes: SCROLLBACK_SIZES,
@@ -221,9 +291,18 @@ window.themeApi = Object.freeze({
   onChange: (listener) => {
     if (typeof listener === 'function') listeners.add(listener);
     return () => listeners.delete(listener);
+  },
+  // Fires when the *roster* of available accents/terminal colours changes
+  // (custom themes finished loading) — separate from onChange, which fires
+  // when the *selected* theme's values change. SETTINGS listens to rebuild
+  // its swatch grids; nothing else needs to care.
+  onCatalogChange: (listener) => {
+    if (typeof listener === 'function') catalogListeners.add(listener);
+    return () => catalogListeners.delete(listener);
   }
 });
 
 // Paint the HUD before the first frame so the interface never flashes the
 // default cyan when another accent is stored.
 applyTheme(currentTheme, { persist: false, notify: false });
+loadCustomThemes();

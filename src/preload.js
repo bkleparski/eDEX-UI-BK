@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld('filesApi', Object.freeze({
   pathForDropSupported: typeof webUtils?.getPathForFile === 'function'
 }));
 
+contextBridge.exposeInMainWorld('themesApi', Object.freeze({
+  listCustom: () => ipcRenderer.invoke('themes:list-custom')
+}));
+
 contextBridge.exposeInMainWorld('settingsApi', Object.freeze({
   get: () => ipcRenderer.invoke('settings:get'),
   update: (patch) => ipcRenderer.invoke('settings:update', patch)
