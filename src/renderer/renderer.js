@@ -471,6 +471,29 @@ function playInputSound(data) {
   harmonic.stop(now + duration + 0.01);
 }
 
+// A two-note rising chime — distinct from the keystroke clicks so it reads
+// as "something finished", not more typing noise.
+function playCommandCompleteSound() {
+  if (!soundEnabled) return;
+  const context = ensureAudioContext();
+  if (!context || context.state === 'closed') return;
+  const now = context.currentTime;
+  [[880, 0], [1_320, 0.09]].forEach(([frequency, delay]) => {
+    const start = now + delay;
+    const duration = 0.16;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.09, start + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.01);
+  });
+}
+
 function updateSound(enabled, activateAudio = true) {
   soundEnabled = enabled;
   document.body.dataset.soundToggleCount = String((Number(document.body.dataset.soundToggleCount) || 0) + 1);
@@ -2240,6 +2263,11 @@ function renderTabLabel(tabId) {
   // Only an unsplit tab needs the marker on the tab button itself — a split
   // tab's own chip carries it instead (below).
   tab.button.classList.toggle('is-zoomed', !split && session?.id === zoomedSessionId);
+  // The tab-level badge is broader than zoom's: it fires if *any* pane in the
+  // tab has a pending notification, even one the user isn't currently looking
+  // at within an otherwise-focused tab — the per-chip badge below pinpoints
+  // which pane it actually is.
+  tab.button.classList.toggle('has-notification', sessions.some((item) => item.completedCommandBadge));
   renderPaneChips(tab, sessions, split);
 }
 
@@ -2287,6 +2315,7 @@ function renderPaneChips(tab, sessions, split) {
     chip.dataset.manualName = session.manualName || '';
     chip.classList.toggle('is-active', session.id === tab.activePaneId);
     chip.classList.toggle('is-zoomed', session.id === zoomedSessionId);
+    chip.classList.toggle('has-notification', session.completedCommandBadge === true);
     chip.setAttribute('aria-pressed', String(session.id === tab.activePaneId));
     session.chip = chip;
   }
@@ -2426,6 +2455,7 @@ function switchTerminalSession(sessionId) {
     closeTerminalSearch({ refocusTerminal: false });
   }
   if (sessionChanged && zoomedSessionId) exitPaneZoom();
+  nextSession.completedCommandBadge = false;
   activeSessionId = sessionId;
   activeTabId = nextSession.tabId;
   const activeTab = terminalTabs.get(activeTabId);
@@ -2521,7 +2551,20 @@ function updateTerminalMetadata(updates) {
       session.tab.dataset.processName = metadata.processName || '';
     }
     if (metadata.processName === 'top') document.body.dataset.ttyTopObserved = 'true';
+    if (metadata.completedCommand) handleCommandCompleted(session, metadata.completedCommand);
   });
+}
+
+// Only worth a badge if the user isn't already looking at it — main reports
+// every foreground->idle transition regardless of focus, so the "was this
+// active" call is made here, where activeSessionId actually lives.
+function handleCommandCompleted(session, completedCommand) {
+  if (session.id === activeSessionId) return;
+  session.completedCommandBadge = true;
+  renderTabLabel(session.tabId);
+  document.body.dataset.commandCompletedCount = String((Number(document.body.dataset.commandCompletedCount) || 0) + 1);
+  playCommandCompleteSound();
+  console.info(`Background command finished in ${paneLabel(session)}: ${completedCommand.name} (${Math.round(completedCommand.durationMs / 1000)}s)`);
 }
 
 function createTerminalTab() {
@@ -2676,7 +2719,8 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
     manualName: null,
     closing: false,
     online: false,
-    failed: false
+    failed: false,
+    completedCommandBadge: false
   };
   terminalSessions.set(sessionId, session);
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {

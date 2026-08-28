@@ -56,6 +56,7 @@ const PROCESS_ENERGY_LIMIT = 40;
 const PROCESS_ENERGY_REFRESH_TICKS = 9;
 const GPU_REFRESH_TICKS = 3;
 const TERMINAL_METADATA_INTERVAL_MS = 500;
+const SLOW_COMMAND_THRESHOLD_MS = 15_000;
 const PUBLIC_IP_CACHE_MS = 5 * 60 * 1_000;
 const PUBLIC_IP_TIMEOUT_MS = 3_000;
 const PUBLIC_IP_ENDPOINT = 'https://api.ipify.org';
@@ -174,6 +175,24 @@ function compactWorkingDirectory(cwd) {
   return segments.slice(-2).join(path.sep) || displayPath;
 }
 
+// A foreground (non-idle) run that lasts long enough to matter, ending back
+// at the shell prompt, is worth a notification — but only once it actually
+// ends, so a still-running command never fires early and a killed pane never
+// fires at all (it just disappears without the idle transition).
+function detectCompletedCommand(state, processInfo, now) {
+  if (!processInfo.idle) {
+    if (state.commandStartedAt === null) state.commandStartedAt = now;
+    state.commandName = processInfo.name;
+    return null;
+  }
+  if (state.commandStartedAt === null) return null;
+  const durationMs = now - state.commandStartedAt;
+  const name = state.commandName;
+  state.commandStartedAt = null;
+  state.commandName = null;
+  return durationMs >= SLOW_COMMAND_THRESHOLD_MS ? { name, durationMs } : null;
+}
+
 async function collectTerminalMetadata(terminal, state, now) {
   const processInfo = processIdentity(terminal.process);
   if (processInfo.idle && (!state.cwd || now - state.cwdCheckedAt >= 1_000)) {
@@ -184,13 +203,15 @@ async function collectTerminalMetadata(terminal, state, now) {
       // Preserve the last known directory if lsof is temporarily unavailable.
     }
   }
+  const completedCommand = detectCompletedCommand(state, processInfo, now);
 
   return {
     processName: processInfo.name,
     command: processInfo.command,
     idle: processInfo.idle,
     cwd: state.cwd || null,
-    label: processInfo.idle ? compactWorkingDirectory(state.cwd) : processInfo.name
+    label: processInfo.idle ? compactWorkingDirectory(state.cwd) : processInfo.name,
+    completedCommand
   };
 }
 
@@ -208,7 +229,7 @@ async function publishTerminalMetadata(webContentsId) {
       try {
         let state = metadataSession.states.get(sessionId);
         if (!state) {
-          state = { cwd: null, cwdCheckedAt: 0 };
+          state = { cwd: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null };
           metadataSession.states.set(sessionId, state);
         }
         return { sessionId, ...(await collectTerminalMetadata(terminal, state, now)) };
@@ -909,7 +930,9 @@ function registerTerminalIpc() {
     });
 
     clientTerminals.set(sessionId, terminal);
-    ensureTerminalMetadataSession(event.sender, sessionId).states.set(sessionId, { cwd: os.homedir(), cwdCheckedAt: 0 });
+    ensureTerminalMetadataSession(event.sender, sessionId).states.set(sessionId, {
+      cwd: os.homedir(), cwdCheckedAt: 0, commandStartedAt: null, commandName: null
+    });
 
     terminal.onData((data) => {
       if (!event.sender.isDestroyed()) {
@@ -2648,6 +2671,30 @@ function createWindow() {
               await wait(900);
               evidence.newTabOpens = tabs().length === 2 && panes().length === 1;
               evidence.previousTabHidden = document.querySelectorAll('.terminal-tab-view[hidden]').length === 1;
+
+              // 8. a background command-completion notification (the real IPC
+              // payload main.js would send once a 15s+ foreground process goes
+              // back to idle — simulated directly here, since actually waiting
+              // 15s for a real one is not worth the wall-clock cost) badges the
+              // inactive tab, never the active one, and clears on switch.
+              const hiddenPaneId = document.querySelector('.terminal-tab-view[hidden] .terminal-instance').dataset.sessionId;
+              const hiddenTabButton = tabs().find((btn) => btn.dataset.sessionId === hiddenPaneId);
+              const activeTabButton = tabs().find((btn) => btn.classList.contains('is-active'));
+              const completedCommand = { name: 'sleep', durationMs: 20_000 };
+
+              updateTerminalMetadata([{ sessionId: hiddenPaneId, completedCommand }]);
+              await wait(100);
+              evidence.notifiesInactiveTab = hiddenTabButton.classList.contains('has-notification');
+              evidence.commandCompletedCounted = document.body.dataset.commandCompletedCount === '1';
+
+              updateTerminalMetadata([{ sessionId: activePane(), completedCommand }]);
+              await wait(100);
+              evidence.noNotifyForActiveSession = !activeTabButton.classList.contains('has-notification')
+                && document.body.dataset.commandCompletedCount === '1';
+
+              hiddenTabButton.click();
+              await wait(300);
+              evidence.notificationClearsOnSwitch = !hiddenTabButton.classList.contains('has-notification');
 
               if (Date.now() - started > 25_000) throw new Error('panes test timed out');
               resolve(evidence);

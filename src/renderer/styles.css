@@ -997,6 +997,18 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   color: var(--cyan-bright);
 }
 
+.tty-pane-chip.has-notification .tty-pane-name::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--cyan-bright);
+  box-shadow: 0 0 4px rgb(var(--cyan-bright-rgb) / .8);
+  vertical-align: middle;
+}
+
 .tty-pane-chip[disabled] {
   opacity: .35;
   cursor: default;
@@ -1365,6 +1377,22 @@ body.booting .boot-content--bottom {
 .tty-tab.is-zoomed .tty-context::before {
   content: '⤢ ';
   color: var(--cyan-bright);
+}
+
+/* On the tab button itself, not nested in .tty-context — that span is
+   hidden once the tab is split, but the badge must stay visible either way
+   (it can mean "some other pane in here finished", not just this tab's own
+   idle/context name). */
+.tty-tab.has-notification::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--cyan-bright);
+  box-shadow: 0 0 4px rgb(var(--cyan-bright-rgb) / .8);
+  vertical-align: middle;
 }
 
 .tty-context-menu,
