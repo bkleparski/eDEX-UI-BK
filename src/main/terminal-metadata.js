@@ -5,19 +5,16 @@
 // shared by the Electron main process and the standalone web server.
 
 const { execFile } = require('node:child_process');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { safeLabel } = require('./format-utils');
 
 const SLOW_COMMAND_THRESHOLD_MS = 15_000;
+const IS_LINUX = process.platform === 'linux';
 
-function terminalWorkingDirectory(terminal) {
+function terminalWorkingDirectoryViaLsof(terminal) {
   return new Promise((resolve, reject) => {
-    if (!terminal || !Number.isInteger(terminal.pid)) {
-      reject(new Error('Terminal process unavailable'));
-      return;
-    }
-
     execFile('/usr/sbin/lsof', ['-a', '-p', String(terminal.pid), '-d', 'cwd', '-Fn'], {
       timeout: 1_000,
       maxBuffer: 64 * 1024
@@ -34,6 +31,30 @@ function terminalWorkingDirectory(terminal) {
       resolve(cwdLine.slice(1));
     });
   });
+}
+
+// /proc/PID/cwd is a symlink to the process's current directory — a single
+// syscall via readlink, no child process, no parsing. Linux only (there's no
+// /proc on macOS); lsof covers everything else (macOS, and Linux hosts/images
+// where /proc isn't mounted for some reason — rare, but readlink failing
+// there just falls through to it below).
+async function terminalWorkingDirectoryViaProcfs(terminal) {
+  return fs.promises.readlink(`/proc/${terminal.pid}/cwd`);
+}
+
+async function terminalWorkingDirectory(terminal) {
+  if (!terminal || !Number.isInteger(terminal.pid)) {
+    throw new Error('Terminal process unavailable');
+  }
+  if (IS_LINUX) {
+    try {
+      return await terminalWorkingDirectoryViaProcfs(terminal);
+    } catch {
+      // Fall through to lsof below — covers a container without /proc
+      // mounted, or a lsof-less image where this just fails either way.
+    }
+  }
+  return terminalWorkingDirectoryViaLsof(terminal);
 }
 
 function processIdentity(processTitle) {

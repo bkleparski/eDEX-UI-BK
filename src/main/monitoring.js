@@ -1,18 +1,40 @@
 'use strict';
 
-// System telemetry collection — CPU/RAM/disk/network/GPU/processes via
-// `systeminformation` plus a few macOS CLI shell-outs (ioreg, lsof, top).
-// Pure Node, no Electron APIs, so both the Electron main process
-// (src/main.js) and the standalone web server (src/server/index.js) share
-// this one implementation instead of drifting apart.
+// System telemetry collection — CPU/RAM/disk/network/processes via
+// `systeminformation` (cross-platform) plus a few macOS-only CLI shell-outs
+// (ioreg for GPU, top for per-process energy impact; lsof for connections is
+// used on Linux too when it happens to be installed). Everything macOS-only
+// degrades to "unavailable" on Linux (see IS_DARWIN/LSOF_PATH below) rather
+// than failing loudly — Phase E3 is what actually exercises that path, in
+// the Docker image (node:22-slim has none of ioreg/top/lsof). Pure Node, no
+// Electron APIs, so both the Electron main process (src/main.js) and the
+// standalone web server (src/server/index.js) share this one implementation
+// instead of drifting apart.
 
 const { execFile } = require('node:child_process');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const si = require('systeminformation');
 const { finiteNumber, clampPercent, safeLabel, isIpv4 } = require('./format-utils');
 
 const forceOfflineTest = process.env.EDEX_FORCE_OFFLINE_TEST === '1';
+const IS_DARWIN = process.platform === 'darwin';
+
+// `lsof` ships with macOS; on Linux (in particular node:22-slim, the Docker
+// target) it's usually just not installed. Checked once at module load —
+// it's a static fact about this host/image, not something that changes tick
+// to tick — so a missing binary short-circuits collectNetworkConnections
+// below instead of spawning a doomed-to-ENOENT process every
+// NETWORK_CONNECTIONS_REFRESH_TICKS forever.
+const LSOF_PATH = ['/usr/sbin/lsof', '/usr/bin/lsof'].find((candidate) => {
+  try {
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}) || null;
 
 const MONITOR_INTERVAL_MS = 1_000;
 const PROCESS_REFRESH_TICKS = 3;
@@ -123,9 +145,12 @@ async function collectNetworkMetric(preferredInterface = null) {
   };
 }
 
+// Already platform-branched from Phase E1 — macOS's real data volume lives
+// at /System/Volumes/Data (the visible "/" is a thin read-only system
+// volume), Linux (bare metal or the Docker image) just has "/".
 function selectPrimaryDisk(fileSystems) {
   if (!Array.isArray(fileSystems) || fileSystems.length === 0) return null;
-  if (process.platform === 'darwin') {
+  if (IS_DARWIN) {
     return fileSystems.find((disk) => disk.mount === '/System/Volumes/Data')
       || fileSystems.find((disk) => disk.mount === '/');
   }
@@ -156,7 +181,13 @@ function runCommand(command, args, timeout = 8_000) {
 
 // Per-process GPU use needs root on macOS, but the accelerator's own counters
 // are world-readable — so the HUD reports GPU load for the device, not per app.
+// `ioreg` is macOS-only (no Linux equivalent wired up — a generic path would
+// mean a different tool per GPU vendor); collectMonitoringSample doesn't
+// track this rejection as an error (see the `errors` object below), so on
+// Linux the GPU block just stays cached null and the renderer already knows
+// to hide it (see telemetry-ui.js's `hasGpu`).
 async function collectGpuMetric() {
+  if (!IS_DARWIN) throw new Error('GPU metrics are macOS-only.');
   const stdout = await runCommand('/usr/sbin/ioreg', ['-r', '-d', '1', '-c', 'IOAccelerator', '-w', '0'], 2_000);
   const statistics = stdout.match(/"PerformanceStatistics"\s*=\s*\{([^}]*)\}/);
   if (!statistics) throw new Error('No accelerator statistics');
@@ -192,11 +223,14 @@ function connectionSortWeight(state) {
 
 // Per-user `lsof -i` needs no root and triggers no TCC prompt on macOS — it
 // only surfaces sockets owned by the current user, which is exactly what a
-// HelpDesk technician wants to see on their own machine.
+// HelpDesk technician wants to see on their own machine. On Linux this is
+// best-effort: lsof isn't installed in the Docker image (node:22-slim) or on
+// a lot of minimal distros, so LSOF_PATH is null there and this returns an
+// empty list rather than spawning a binary that doesn't exist.
 async function collectNetworkConnections() {
-  if (forceOfflineTest) return [];
+  if (forceOfflineTest || !LSOF_PATH) return [];
 
-  const stdout = await runCommand('/usr/sbin/lsof', ['-i', '-n', '-P', '-F', 'pcnPT'], 3_000);
+  const stdout = await runCommand(LSOF_PATH, ['-i', '-n', '-P', '-F', 'pcnPT'], 3_000);
   const rows = [];
   let currentPid = null;
   let currentCommand = null;
@@ -263,7 +297,11 @@ async function collectNetworkConnections() {
 
 // `top` reports energy impact only from its second sample on, so this costs a
 // second of wall time and runs on its own slow cadence, off the telemetry tick.
+// BSD `top`'s `-o power -stats pid,power` is macOS-specific — GNU top (Linux)
+// has no equivalent concept, so this never runs there; energyAvailable stays
+// false forever and the renderer hides the ENERGY sort button accordingly.
 async function collectProcessEnergy() {
+  if (!IS_DARWIN) throw new Error('Energy impact is macOS-only.');
   const stdout = await runCommand('/usr/bin/top', [
     '-l', '2', '-s', '1', '-n', String(PROCESS_ENERGY_LIMIT),
     '-o', 'power', '-stats', 'pid,power'
@@ -440,6 +478,12 @@ async function collectMonitoringSample(session) {
     connections,
     processes: topProcessesForEveryColumn(processes || []),
     energyAvailable: Boolean(session.cache.energyByPid),
+    // Static per-process capability, not per-sample data — an empty
+    // `connections` array is ambiguous (no sockets open right now vs. no way
+    // to ever list them), so the renderer needs this to tell "CONN has
+    // nothing to show today" from "CONN doesn't work here" (see
+    // telemetry-ui.js's connectionsAvailable handling).
+    connectionsAvailable: Boolean(LSOF_PATH),
     errors
   };
 }

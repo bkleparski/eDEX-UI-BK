@@ -36,10 +36,30 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const RENDERER_ROOT = path.join(PROJECT_ROOT, 'src', 'renderer');
 const NODE_MODULES_ROOT = path.join(PROJECT_ROOT, 'node_modules');
 
-const HOST = process.env.EDEX_WEB_HOST || '127.0.0.1';
+// main.js's Electron terminal always spawns `/bin/zsh -l` (that's the shell
+// on every Mac since Catalina), but this server also targets Linux
+// containers, which typically don't ship zsh — node:22-slim's node-pty
+// spawn would just fail outright with ENOENT. Prefer zsh where it exists
+// for behavioral parity with the Electron app, else fall back to whatever
+// shell the image actually has.
+function defaultShell() {
+  for (const candidate of ['/bin/zsh', '/bin/bash', '/bin/sh']) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '/bin/sh';
+}
+
+// Bare metal (macOS/Linux) defaults to loopback-only — remote access is
+// meant to go through something in front of this (Cloudflare Tunnel, an SSH
+// tunnel), never a direct exposed bind. The Docker image (Dockerfile) sets
+// EDEX_WEB_BIND=0.0.0.0 itself, because inside a container 127.0.0.1 isn't
+// reachable from the host at all — the port mapping in docker-compose.yml
+// (127.0.0.1:3040:3040) is what keeps that loopback-only property from the
+// host's point of view.
+const HOST = process.env.EDEX_WEB_BIND || '127.0.0.1';
 const PORT = Number.parseInt(process.env.EDEX_WEB_PORT, 10) || 3040;
 const TOKEN = process.env.EDEX_WEB_TOKEN || crypto.randomUUID();
-const SHELL = process.env.EDEX_WEB_SHELL || '/bin/zsh';
+const SHELL = process.env.EDEX_WEB_SHELL || defaultShell();
 const TOKEN_COOKIE = 'edex_web_token';
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const MAX_TERMINALS_PER_CONNECTION = 8;

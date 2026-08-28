@@ -1,0 +1,32 @@
+# EBARTNET-UI web preview — Docker/Linux target (Phase E3).
+#
+# `docker compose up -d` builds the image and starts it bound to
+# 127.0.0.1:3040 on the host — loopback only, on purpose. Remote access is
+# meant to go through something already sitting in front of this host
+# (Cloudflare Tunnel, an SSH tunnel), never a directly published port.
+#
+# Before first run, replace EDEX_WEB_TOKEN below with a real secret
+# (`openssl rand -hex 32` or similar) — anyone with this token gets a shell
+# on the host. Leaving it unset instead makes the server generate one itself
+# and print it on startup (`docker compose logs`), which works too and never
+# ends up committed anywhere.
+services:
+  edex-ui-web:
+    build: .
+    image: ebartnet-ui-web:latest
+    ports:
+      - "127.0.0.1:3040:3040"
+    environment:
+      EDEX_WEB_TOKEN: "change-me-to-a-real-secret"
+      # EDEX_WEB_BIND and EDEX_WEB_DATA already default correctly inside the
+      # image (see Dockerfile) — spelled out here only as documentation of
+      # what's tunable. EDEX_WEB_SHELL: "/bin/bash" would force a shell
+      # other than the image's own zsh/bash/sh auto-detection.
+      # EDEX_WEB_BIND: "0.0.0.0"
+      # EDEX_WEB_DATA: "/data"
+    volumes:
+      - edex-web-data:/data
+    restart: unless-stopped
+
+volumes:
+  edex-web-data:

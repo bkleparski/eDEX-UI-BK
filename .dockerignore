@@ -1,0 +1,24 @@
+# Keeps the Docker build context small and the image free of anything the
+# server doesn't need — see Dockerfile's COPY lines for what actually goes
+# in (src/, resources/, package*.json only).
+node_modules
+dist
+out
+build
+docs
+test
+session-logs
+.git
+.github
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.md
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+*-screenshot.png
+ref-*.png
+bug-*.png

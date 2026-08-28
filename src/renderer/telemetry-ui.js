@@ -23,6 +23,14 @@ let processSortKey = 'cpuPercent';
 let lastProcesses = [];
 let processViewKey = 'process';
 let lastConnections = [];
+// Whether this platform can report these at all — set from the monitoring
+// sample's energyAvailable/connectionsAvailable (see src/main/monitoring.js;
+// both are macOS-only capabilities, always false on Linux/Docker). Default
+// true so the buttons start visible and only disappear once a sample says
+// otherwise, same as the rest of the telemetry column already does (nothing
+// hides before the first sample lands).
+let energyAvailable = true;
+let connectionsAvailable = true;
 
 const CONNECTION_STATE_ABBREVIATIONS = {
   ESTABLISHED: 'EST',
@@ -266,16 +274,26 @@ function renderConnections(connections) {
 // CONNECTIONS hides them rather than adding a second row of controls — the
 // telemetry column has no vertical slack to spare (see the :has(#gpuBlock)
 // compaction rules below, which already claim it back for TOP PROCESSES).
+// ENERGY and the CONN toggle itself are additionally gated on platform
+// capability (energyAvailable/connectionsAvailable) — always true on macOS,
+// permanently false on Linux, where there's no `top -o power` and (usually)
+// no `lsof` at all. See collectMonitoringSample in src/main/monitoring.js.
+function syncProcessControlVisibility() {
+  const isProcessView = processViewKey === 'process';
+  document.querySelectorAll('#processSortGroup .process-sort-btn[data-sort-key]').forEach((button) => {
+    const isEnergyButton = button.dataset.sortKey === 'energyImpact';
+    button.hidden = !isProcessView || (isEnergyButton && !energyAvailable);
+  });
+  document.getElementById('processViewConn').hidden = !isProcessView || !connectionsAvailable;
+  document.getElementById('processViewProc').hidden = isProcessView;
+}
+
 function setProcessView(viewKey) {
   if (viewKey === processViewKey) return;
   processViewKey = viewKey;
   const isProcessView = viewKey === 'process';
   document.getElementById('processMetricTitle').textContent = isProcessView ? 'TOP PROCESSES' : 'CONNECTIONS';
-  document.querySelectorAll('#processSortGroup .process-sort-btn[data-sort-key]').forEach((button) => {
-    button.hidden = !isProcessView;
-  });
-  document.getElementById('processViewConn').hidden = !isProcessView;
-  document.getElementById('processViewProc').hidden = isProcessView;
+  syncProcessControlVisibility();
   document.getElementById('processList').hidden = !isProcessView;
   document.getElementById('connectionsList').hidden = isProcessView;
 }
@@ -381,6 +399,22 @@ function renderMonitoring(sample) {
 
   lastConnections = Array.isArray(sample.connections) ? sample.connections : [];
   renderConnections(lastConnections);
+
+  const capabilitiesChanged = energyAvailable !== (sample.energyAvailable === true)
+    || connectionsAvailable !== (sample.connectionsAvailable === true);
+  energyAvailable = sample.energyAvailable === true;
+  connectionsAvailable = sample.connectionsAvailable === true;
+  if (capabilitiesChanged) {
+    // A capability disappearing out from under the current view/sort (only
+    // realistic if the server itself changed platform mid-session, but
+    // cheap to handle) bounces back to the always-available default instead
+    // of leaving a hidden control selected. setProcessView already calls
+    // syncProcessControlVisibility itself; the plain sort case needs it
+    // called explicitly since setProcessSortKey doesn't touch hidden state.
+    if (!connectionsAvailable && processViewKey === 'connections') setProcessView('process');
+    if (!energyAvailable && processSortKey === 'energyImpact') setProcessSortKey('cpuPercent');
+    syncProcessControlVisibility();
+  }
 
   const systemUnavailable = !sample.cpu && !sample.memory;
   const networkUnavailable = !sample.network && (!sample.processes || sample.processes.length === 0);
