@@ -121,6 +121,10 @@ function applyTerminalAppearance(appearance = window.themeApi?.appearance()) {
     session.terminal.options.theme = palette;
     session.terminal.options.fontFamily = appearance.fontFamily;
     session.terminal.options.fontSize = appearance.fontSize;
+    // Cached glyph bitmaps are keyed by (char, colors), so a new accent or
+    // font would otherwise keep painting from the stale atlas until enough
+    // cache churn evicts it — clear it explicitly so the switch is instant.
+    session.webglAddon?.clearTextureAtlas();
   }
   fitActiveTerminal();
 }
@@ -2450,6 +2454,25 @@ function removeTerminalTab(tabId) {
   if (activeTabId === tabId) activeTabId = null;
 }
 
+// WebGL rendering is an upgrade, not a requirement — some GPUs/drivers refuse
+// a context (activate() throws), and an already-running one can lose its
+// context later (dropped GPU process, sleep/wake). Either way xterm's own
+// canvas renderer is still there underneath once the addon is gone.
+function loadWebglAddon(session) {
+  try {
+    const webglAddon = new WebglAddon.WebglAddon();
+    webglAddon.onContextLoss(() => {
+      webglAddon.dispose();
+      if (session.webglAddon === webglAddon) session.webglAddon = null;
+    });
+    session.terminal.loadAddon(webglAddon);
+    session.webglAddon = webglAddon;
+  } catch (error) {
+    console.warn('WebGL terminal renderer unavailable, using canvas:', error);
+    session.webglAddon = null;
+  }
+}
+
 async function createTerminalSession({ tabId = null, splitFrom = null, direction = 'row' } = {}) {
   if (terminalSessions.size >= maxTerminalSessions) {
     terminalSessions.get(activeSessionId)?.terminal.write(`\r\n[TTY LIMIT: ${maxTerminalSessions}]\r\n`);
@@ -2494,6 +2517,12 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
   terminal.loadAddon(fitAddon);
   const searchAddon = new SearchAddon.SearchAddon();
   terminal.loadAddon(searchAddon);
+  // CSP locks connect-src down to 'none', so the renderer can't open anything
+  // itself — hand the URL to main over the same validated (http/https-only,
+  // trusted-sender) channel the assistant's source citations already use.
+  terminal.loadAddon(new WebLinksAddon.WebLinksAddon((_event, uri) => {
+    window.assistantApi.openSource(uri).catch((error) => console.warn('Failed to open link:', error));
+  }));
   terminal.open(container);
   fitAddon.fit();
   const session = {
@@ -2502,6 +2531,7 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
     terminal,
     fitAddon,
     searchAddon,
+    webglAddon: null,
     container,
     tab: tab.button,
     autoContext: '~',
@@ -2515,6 +2545,7 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
     if (terminalSearchSessionId === sessionId) updateTerminalSearchCount(resultIndex, resultCount);
   });
+  loadWebglAddon(session);
   paneResizeObserver.observe(container);
   container.addEventListener('pointerdown', () => {
     if (activeSessionId !== sessionId) switchTerminalSession(sessionId);
