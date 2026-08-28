@@ -42,13 +42,21 @@ and *Tron: Legacy*; none of the original source was copied.
 - Real `zsh` login shell through `node-pty`, rebuilt for `arm64`
 - Multiple tabs (`⌘T`), rename, close, automatic respawn when a shell exits
 - **Split panes inside a tab** (`⌘D` / `⇧⌘D`), nested to any depth, each pane its own shell
+- Full-pane zoom (`⇧⌘⏎`) without disturbing the split layout underneath
 - Drag files from Finder or the built-in browser straight into the prompt — paths are shell-quoted for you
+- Search the scrollback like iTerm2 (`⌘F`) — match counter, `⏎`/`⇧⏎` to step through, `Esc` to close
+- Clickable URLs open in your default browser; WebGL-accelerated rendering with a silent canvas fallback
+- `⌘K` clears the active pane's scrollback; a HUD dialog warns before a multi-line paste actually lands
+- Scrollback depth is configurable in `SETTINGS` (1K–100K lines), applied live
+- A background pane's tab/chip lights up once a command running ≥15s finishes, with an optional chime
+- An optional on-screen keyboard (`⇧⌘K`) lights up each key as you type — display-only, it never reads or injects input
 
 **Live telemetry, not decoration**
 - CPU load with per-core bars and history sparkline
+- GPU load with a render/tiler breakdown, read from the same IOAccelerator counters Activity Monitor uses — no extra permission prompt
 - Memory broken down into used / cached / available / free / swap, with a segmented bar
 - Disk usage, network throughput, LAN + public IPv4, latency, battery
-- Top processes sorted by CPU, refreshed continuously
+- Top processes sortable by CPU, memory or energy impact — or flip the same panel to CONN for the machine's live network connections
 
 **A file manager, not just a listing**
 - `LIST` · `DETAILS` (size + modified date) · `TILES` (icon grid)
@@ -63,6 +71,23 @@ and *Tron: Legacy*; none of the original source was copied.
 - Terminal colour, typeface and size are set separately, with a live preview
 - Seven bundled monospace faces, all with Nerd Font glyphs kept as fallback
 - Choices persist between launches; one button restores the defaults
+- **Bring your own accent**: drop a JSON file into `userData/themes/` and it shows up in
+  SETTINGS next to the built-ins, prefixed `CUSTOM:`
+
+Custom themes live in `~/Library/Application Support/EBARTNET-UI/themes/`. The app seeds one
+example there the first time that folder is created:
+
+```json
+{
+  "name": "RINZLER",
+  "accent": { "cyan": [210, 20, 20], "cyanBright": [255, 130, 110], "cyanDim": [110, 10, 10] },
+  "terminalColor": { "foreground": [255, 90, 70], "cursor": [255, 170, 140] }
+}
+```
+
+`terminalColor` is optional — omit it and the accent's own colours double as the terminal
+palette. A malformed file is skipped with a console warning, never a crash, and deleting the
+file behind your selected theme falls back to the default cyan the next time it's read.
 
 **AI assistant, local-first**
 - Chat panel docked next to the terminal, resizable and persistent
@@ -79,7 +104,13 @@ and *Tron: Legacy*; none of the original source was copied.
 <p align="center">
   <img src="docs/assets/screenshot-themes.png" alt="WYGLĄD section: HUD accent, terminal colour, typeface and size" width="72%">
 </p>
-<p align="center"><i>SETTINGS → WYGLĄD. The interface labels are in Polish; the shell is yours.</i></p>
+<p align="center"><i>SETTINGS → WYGLĄD. The sixth, red swatch is a custom theme loaded from a JSON
+file — the interface labels are in Polish; the shell is yours.</i></p>
+
+<p align="center">
+  <img src="docs/assets/screenshot-keyboard.png" alt="On-screen keyboard with the A key lit up" width="100%">
+</p>
+<p align="center"><i>The on-screen keyboard (<code>⇧⌘K</code>) — display-only, it never reads or injects input.</i></p>
 
 <p align="center">
   <img src="docs/assets/screenshot-assistant.png" alt="AI assistant panel docked next to the terminal" width="100%">
@@ -111,14 +142,27 @@ Requires macOS on Apple Silicon (arm64).
 | `⇧⌘D` | Split the focused pane top and bottom |
 | `⌥⌘←↑→↓` | Move focus to the neighbouring pane |
 | `⇧⌘W` | Close the focused pane (the last one closes its tab) |
+| `⇧⌘⏎` | Toggle full-pane zoom for the focused pane |
+| `⌘F` | Search the scrollback (opens the FILES filter instead if that panel has real focus) |
+| `⌘K` | Clear the active pane's scrollback |
 
 Panes nest to any depth, and each one runs its own shell. Drag a border to rebalance a pair
 (no pane shrinks below 12%), and the focused pane is outlined once a tab holds more than one.
-Tabs and panes share a budget of 8 shells in total.
+Tabs and panes share a budget of 8 shells in total. Zoom hides every sibling along the path to
+the root without touching the split tree itself — a `⤢` marker shows on the zoomed pane's chip
+and tab, and it exits on its own when you switch tabs, close the pane, or navigate with the
+arrow-focus shortcut above.
 
 A split tab branches in the bar — `01 ├ claude ├ codex` — with one chip per pane, named after
 the process it is running. Click a chip to focus that pane, right-click it to rename or close
-that pane alone.
+that pane alone. A pane that just finished a command running ≥15s lights up its chip (and tab,
+if it's not the focused pane) with a small dot — with an optional two-tone chime if keystroke
+sounds are on — so you notice a long build finishing in a pane you're not watching.
+
+The search bar (`⌘F`) sits over the active pane with a live match counter; `⏎`/`⇧⏎` step to the
+next/previous hit and `Esc` closes it and returns focus to the shell. A dialog also intercepts
+any paste with more than one line, showing a preview before it reaches the shell — multi-line
+pastes are a common way to run something you didn't mean to.
 
 **HUD**
 
@@ -129,6 +173,7 @@ that pane alone.
 | `⌘3` | Toggle the AI ASSISTANT panel |
 | `⇧⌘L` | Toggle the scanline overlay |
 | `⇧⌘S` | Toggle keystroke sounds |
+| `⇧⌘K` | Toggle the on-screen keyboard |
 
 **File browser** (while the panel is open)
 
@@ -186,19 +231,25 @@ never written to disk.
 
 ```
 src/
-├── main.js                  Electron main: PTY, telemetry, file IPC, window lifecycle
-├── preload.js               contextBridge — the only renderer↔main surface
+├── main.js                    Electron main: PTY, telemetry, file IPC, window lifecycle
+├── preload.js                 contextBridge — the only renderer↔main surface
 ├── main/
-│   ├── config-store.js      atomic 0600 config writes, secrets never leave main
-│   └── assistant/           provider registry, agent loop, Brave tool, CLI bridge
+│   ├── config-store.js        atomic 0600 config writes, secrets never leave main
+│   ├── theme-file-validator.js  validates userData/themes/*.json (pure, unit-tested)
+│   ├── assistant/             provider registry, agent loop, Brave tool, CLI bridge
+│   └── e2e/                   drivers behind npm run test:smoke/visual/files/panes/assistant-ui
 └── renderer/
-    ├── renderer.js          terminal, pane layout, telemetry, file manager, HUD controls
-    ├── assistant-ui.js      AI panel + settings dialog
-    ├── filesystem-ui.js     file panel toggle, resize, view modes
-    ├── theme.js             accent/colour/typeface presets, persistence, token application
-    ├── theme-ui.js          the WYGLĄD controls in SETTINGS
-    ├── theme-tokens.css     RGB triplets every translucent surface is composed from
-    └── styles.css           the entire Tron/GRID visual system
+    ├── renderer.js             terminal sessions, HUD controls, boot sequence, shortcuts
+    ├── terminal-panes.js       split/stack/zoom layout, search, TTY rename, context menu
+    ├── telemetry-ui.js         CPU/GPU/memory/network panels, TOP PROCESSES/CONN switch
+    ├── file-browser.js         LIST/DETAILS/TILES, drag-drop, rename, trash
+    ├── filesystem-ui.js        file panel toggle, resize, view modes
+    ├── panel-resizer.js        the draggable split between the terminal and a side panel
+    ├── assistant-ui.js         AI panel + settings dialog
+    ├── theme.js                built-in + custom accent/colour/typeface presets, persistence
+    ├── theme-ui.js             the WYGLĄD controls in SETTINGS
+    ├── theme-tokens.css        RGB triplets every translucent surface is composed from
+    └── styles.css              the entire Tron/GRID visual system
 ```
 
 Tabs own a layout tree of panes, and that tree lives in the DOM: a `.terminal-split` always
@@ -228,7 +279,8 @@ npm run install:app # build and replace /Applications/EBARTNET-UI.app
 ### Tests
 
 ```bash
-npm run test:unit             # provider, config and CLI-bridge unit tests
+npm run lint                  # eslint across main and renderer
+npm run test:unit             # provider, config, CLI-bridge, telemetry and theme-file tests
 npm run test:smoke            # boots Electron, verifies the PTY round-trip
 npm run test:files            # file manager + theme behaviour on a temp directory
 npm run test:panes            # split, stack, navigate, resize and close panes
