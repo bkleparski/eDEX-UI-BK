@@ -50,6 +50,7 @@ const terminalSessions = new Map();
 const terminalTabs = new Map();
 let activeSessionId = null;
 let activeTabId = null;
+let terminalSearchSessionId = null;
 let nextSessionNumber = 1;
 let nextTabNumber = 1;
 let bootTimer;
@@ -1371,7 +1372,11 @@ function handleFileBrowserKeydown(event) {
   if (!document.getElementById('fileRenamePopover').hidden) return;
   const filterFocused = document.activeElement === document.getElementById('fileFilterInput');
 
+  // ⌘F is shared with terminal search (initializeControls): only claim it here
+  // when focus is actually inside FILES — otherwise fall through unhandled so
+  // the terminal search shortcut gets it, matching iTerm2-style expectations.
   if (event.metaKey && !event.altKey && !event.ctrlKey && event.code === 'KeyF') {
+    if (!panel.contains(document.activeElement)) return;
     event.preventDefault();
     event.stopPropagation();
     openFileFilter();
@@ -1555,12 +1560,125 @@ function fitActiveTerminal({ focus = false } = {}) {
     for (const session of visibleSessions()) fitSession(session);
     const session = terminalSessions.get(activeSessionId);
     if (shouldFocus && session) session.terminal.focus();
+    if (!document.getElementById('terminalSearchBar').hidden) positionTerminalSearchBar();
   });
 }
 
 function focusTerminal() {
   const session = terminalSessions.get(activeSessionId);
   if (session) fitActiveTerminal({ focus: true });
+}
+
+// Text-entry surfaces outside the terminal (TTY rename, file rename, theme
+// inputs) must keep plain typing — ⌘F there should not hijack focus into
+// terminal search. The terminal's own hidden textarea is the one exception.
+function isTypingInForeignInput() {
+  const element = document.activeElement;
+  if (!element || element.classList?.contains('xterm-helper-textarea')) return false;
+  return element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable;
+}
+
+// Search highlights are painted in the theme's accent, matching the HUD
+// chrome rather than the terminal's own (independently chosen) text color —
+// decorations need plain #RRGGBB, so read the resolved custom properties.
+function terminalSearchDecorations() {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name, fallback) => styles.getPropertyValue(name).trim() || fallback;
+  const dim = token('--cyan-dim', '#087f9c');
+  const cyan = token('--cyan', '#00e5ff');
+  const bright = token('--cyan-bright', '#8ff8ff');
+  return {
+    matchBackground: dim,
+    matchBorder: cyan,
+    matchOverviewRuler: cyan,
+    activeMatchBackground: cyan,
+    activeMatchBorder: bright,
+    activeMatchColorOverviewRuler: bright
+  };
+}
+
+function terminalSearchOptions(extra = {}) {
+  return { decorations: terminalSearchDecorations(), ...extra };
+}
+
+function positionTerminalSearchBar() {
+  const session = terminalSessions.get(terminalSearchSessionId);
+  const bar = document.getElementById('terminalSearchBar');
+  if (!session || !session.container.isConnected) return;
+  const rect = session.container.getBoundingClientRect();
+  bar.style.left = `${Math.round(rect.left)}px`;
+  bar.style.top = `${Math.round(rect.top)}px`;
+  bar.style.width = `${Math.round(rect.width)}px`;
+}
+
+function updateTerminalSearchCount(resultIndex, resultCount) {
+  const bar = document.getElementById('terminalSearchBar');
+  const hasQuery = document.getElementById('terminalSearchInput').value.length > 0;
+  document.getElementById('terminalSearchCount').textContent = resultCount > 0 ? `${resultIndex + 1}/${resultCount}` : '0/0';
+  bar.classList.toggle('is-empty', hasQuery && resultCount === 0);
+}
+
+function runTerminalSearch(direction = 'next', extra = {}) {
+  const session = terminalSessions.get(terminalSearchSessionId);
+  const input = document.getElementById('terminalSearchInput');
+  if (!session) return;
+  const term = input.value;
+  if (!term) {
+    session.searchAddon.clearDecorations();
+    updateTerminalSearchCount(-1, 0);
+    return;
+  }
+  const method = direction === 'prev' ? 'findPrevious' : 'findNext';
+  session.searchAddon[method](term, terminalSearchOptions(extra));
+}
+
+// One shared bar bound to whichever pane was active when it opened — switching
+// panes closes it (see switchTerminalSession/handleTerminalExit) rather than
+// tracking per-pane state, which keeps this simple like iTerm2's own find bar.
+function openTerminalSearch() {
+  const session = terminalSessions.get(activeSessionId);
+  if (!session) return;
+  terminalSearchSessionId = activeSessionId;
+  const bar = document.getElementById('terminalSearchBar');
+  bar.hidden = false;
+  bar.setAttribute('aria-hidden', 'false');
+  positionTerminalSearchBar();
+  const input = document.getElementById('terminalSearchInput');
+  input.focus();
+  input.select();
+  if (input.value) runTerminalSearch('next', { incremental: true });
+}
+
+function closeTerminalSearch({ refocusTerminal = true } = {}) {
+  const bar = document.getElementById('terminalSearchBar');
+  if (bar.hidden) return;
+  bar.hidden = true;
+  bar.setAttribute('aria-hidden', 'true');
+  bar.classList.remove('is-empty');
+  terminalSessions.get(terminalSearchSessionId)?.searchAddon.clearDecorations();
+  terminalSearchSessionId = null;
+  if (refocusTerminal) focusTerminal();
+}
+
+function initializeTerminalSearch() {
+  const input = document.getElementById('terminalSearchInput');
+  input.addEventListener('input', () => runTerminalSearch('next', { incremental: true }));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      runTerminalSearch(event.shiftKey ? 'prev' : 'next');
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTerminalSearch();
+    }
+  });
+  document.getElementById('terminalSearchNext').addEventListener('click', () => runTerminalSearch('next'));
+  document.getElementById('terminalSearchPrev').addEventListener('click', () => runTerminalSearch('prev'));
+  document.getElementById('terminalSearchClose').addEventListener('click', () => closeTerminalSearch());
+  window.themeApi?.onChange(() => {
+    if (!document.getElementById('terminalSearchBar').hidden) runTerminalSearch('next', { incremental: true });
+  });
 }
 
 // Geometric navigation beats tree walking here: it does the right thing for
@@ -1832,6 +1950,7 @@ function initializeControls() {
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
   document.getElementById('systemGroupToggle').addEventListener('click', toggleSystemGroup);
   initializeProcessSort();
+  initializeTerminalSearch();
   recordSystemVisibilityState(!document.body.classList.contains('system-group-hidden'));
   updateClock();
   const clockTimer = setInterval(updateClock, 1_000);
@@ -1850,6 +1969,18 @@ function initializeControls() {
       event.preventDefault();
       event.stopPropagation();
       focusPaneInDirection(direction);
+      return;
+    }
+    // ⌘F is FILES' filter shortcut while that panel has real focus (handled in
+    // capture phase by handleFileBrowserKeydown, which stops propagation before
+    // this runs); anywhere else — and by far the common case, since the
+    // terminal keeps DOM focus even while the FILES panel sits open beside it
+    // — ⌘F opens terminal search instead, like iTerm2.
+    if (event.code === 'KeyF' && !event.shiftKey) {
+      if (isTypingInForeignInput()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openTerminalSearch();
       return;
     }
     // ⌘D splits side by side, ⇧⌘D stacks — same orientation as iTerm2.
@@ -2152,6 +2283,9 @@ function switchTerminalSession(sessionId) {
   if (!nextSession) return;
   const sessionChanged = sessionId !== activeSessionId;
   const resumedFromBrowsing = sessionChanged && fileBrowserMode === 'browsing';
+  if (sessionChanged && terminalSearchSessionId && terminalSearchSessionId !== sessionId) {
+    closeTerminalSearch({ refocusTerminal: false });
+  }
   activeSessionId = sessionId;
   activeTabId = nextSession.tabId;
   const activeTab = terminalTabs.get(activeTabId);
@@ -2188,6 +2322,7 @@ function handleTerminalExit(sessionId) {
 
   if (ttyContextSessionId === sessionId) hideTTYContextMenu();
   if (ttyRenameSessionId === sessionId) hideTTYRename();
+  if (terminalSearchSessionId === sessionId) closeTerminalSearch({ refocusTerminal: false });
 
   terminalSessions.delete(sessionId);
   session.terminal.dispose();
@@ -2341,6 +2476,9 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
 
   const appearance = window.themeApi?.appearance() || {};
   const terminal = new Terminal({
+    // SearchAddon's match highlighting uses registerDecoration, which xterm
+    // gates behind this flag as a "proposed" (not yet stabilized) API.
+    allowProposedApi: true,
     cursorBlink: true,
     convertEol: false,
     fontFamily: appearance.fontFamily || '"Monaspace Neon NF", "SF Mono", Menlo, monospace',
@@ -2354,6 +2492,8 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
 
   const fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
+  const searchAddon = new SearchAddon.SearchAddon();
+  terminal.loadAddon(searchAddon);
   terminal.open(container);
   fitAddon.fit();
   const session = {
@@ -2361,6 +2501,7 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
     tabId: tab.id,
     terminal,
     fitAddon,
+    searchAddon,
     container,
     tab: tab.button,
     autoContext: '~',
@@ -2371,6 +2512,9 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
     failed: false
   };
   terminalSessions.set(sessionId, session);
+  searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
+    if (terminalSearchSessionId === sessionId) updateTerminalSearchCount(resultIndex, resultCount);
+  });
   paneResizeObserver.observe(container);
   container.addEventListener('pointerdown', () => {
     if (activeSessionId !== sessionId) switchTerminalSession(sessionId);

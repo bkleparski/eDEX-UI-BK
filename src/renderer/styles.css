@@ -1436,6 +1436,84 @@ body.booting .boot-content--bottom {
   box-shadow: 0 0 6px rgb(var(--cyan-rgb) / .2), inset 0 0 5px rgb(var(--cyan-rgb) / .1);
 }
 
+.terminal-search {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgb(var(--cyan-bright-rgb) / .72);
+  background: rgb(2 8 10 / .97);
+  box-shadow:
+    0 0 8px rgb(var(--cyan-rgb) / .24),
+    inset 0 0 5px rgb(var(--cyan-rgb) / .08);
+  will-change: transform;
+}
+
+.terminal-search[hidden] {
+  display: none;
+}
+
+.terminal-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid rgb(var(--cyan-rgb) / .6);
+  border-radius: 0;
+  padding: 5px 7px;
+  color: var(--cyan-bright);
+  background: rgb(0 0 0 / .5);
+  box-shadow: inset 0 0 5px rgb(var(--cyan-rgb) / .08);
+  font-family: var(--font-terminal);
+  font-size: 11px;
+  outline: 0;
+  caret-color: var(--cyan-bright);
+}
+
+.terminal-search__input:focus {
+  border-color: var(--cyan-bright);
+  box-shadow: 0 0 6px rgb(var(--cyan-rgb) / .2), inset 0 0 5px rgb(var(--cyan-rgb) / .1);
+}
+
+.terminal-search.is-empty .terminal-search__input {
+  border-color: rgb(var(--amber-rgb) / .6);
+}
+
+.terminal-search__count {
+  flex: 0 0 auto;
+  min-width: 34px;
+  color: var(--text-secondary);
+  font-size: 8px;
+  letter-spacing: .1em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-search.is-empty .terminal-search__count {
+  color: var(--text-warning);
+}
+
+.terminal-search__btn {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .32);
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-family: var(--font-hud-label);
+  font-size: 8px;
+  letter-spacing: .1em;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.terminal-search__btn:hover {
+  border-color: rgb(var(--cyan-rgb) / .75);
+  color: var(--text-bright);
+}
+
 .time-meta {
   gap: 7px;
   font-size: 9px;
