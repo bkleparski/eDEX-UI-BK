@@ -1,6 +1,6 @@
 {
   "name": "ebartnet-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "author": "Bartłomiej Kleparski",
   "description": "EBARTNET-UI — native Apple Silicon terminal for macOS with a Tron-inspired HUD, live telemetry, file browser and a multi-provider AI assistant.",
