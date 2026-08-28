@@ -339,6 +339,30 @@
         <span class="tty-rename-hint hud-label">ENTER ZATWIERDŹ · ESC ANULUJ</span>
       </div>
 
+      <!-- HTML stand-ins for window.filesApi.confirm/chooseDirectory (native
+           Electron dialogs) — only used when edexCapabilities.nativeDialogs
+           is false, i.e. the web preview. See file-browser.js's
+           requestConfirmation/requestDirectoryChoice. -->
+      <div class="tty-rename-popover paste-warning-popover" id="hudConfirmPopover" role="alertdialog"
+        aria-labelledby="hudConfirmLabel" aria-hidden="true" hidden>
+        <span class="hud-label" id="hudConfirmLabel">POTWIERDŹ OPERACJĘ?</span>
+        <pre class="paste-warning-preview" id="hudConfirmDetail"></pre>
+        <div class="paste-warning-actions">
+          <button class="view-mode-btn hud-label" id="hudConfirmCancel" type="button">ANULUJ</button>
+          <button class="view-mode-btn hud-label" id="hudConfirmOk" type="button">OK</button>
+        </div>
+      </div>
+
+      <div class="tty-rename-popover hud-directory-picker" id="hudDirectoryPickerPopover" role="dialog"
+        aria-label="Wybierz katalog docelowy" aria-hidden="true" hidden>
+        <span class="hud-label" id="hudDirectoryPickerPath"></span>
+        <div class="hud-directory-picker-list" id="hudDirectoryPickerList"></div>
+        <div class="paste-warning-actions">
+          <button class="view-mode-btn hud-label" id="hudDirectoryPickerCancel" type="button">ANULUJ</button>
+          <button class="view-mode-btn hud-label" id="hudDirectoryPickerSelect" type="button">PRZENIEŚ TUTAJ</button>
+        </div>
+      </div>
+
       <div class="tty-rename-popover hud-frame" id="ttyRenamePopover" aria-hidden="true" hidden>
         <label class="hud-label" for="ttyRenameInput">TTY NAME</label>
         <input class="tty-rename-input" id="ttyRenameInput" type="text" maxlength="24"

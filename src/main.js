@@ -7,18 +7,20 @@ const os = require('node:os');
 const path = require('node:path');
 const pty = require('node-pty');
 const { AssistantService } = require('./main/assistant/assistant-service');
-const { PROVIDER_IDS } = require('./main/assistant/contracts');
 const { LMStudioProvider } = require('./main/assistant/lmstudio-provider');
 const { LocalCliBridge } = require('./main/assistant/local-cli-bridge');
 const { OllamaProvider } = require('./main/assistant/ollama-provider');
-const { OpenCodeGoProvider } = require('./main/assistant/opencode-go-provider');
-const { OpenRouterProvider } = require('./main/assistant/openrouter-provider');
+const { configureCloudProviders, requireConfiguredCloudProvider, assistantErrorPayload } = require('./main/assistant/orchestration');
 const { ProviderRegistry } = require('./main/assistant/provider-registry');
 const { ConfigStore } = require('./main/config-store');
-const { finiteNumber, safeLabel } = require('./main/format-utils');
+const {
+  IMAGE_PREVIEW_MAX_BYTES, validDirectoryPath, validEntryPaths, validEntryName, pathExists,
+  transferEntries, createImagePreviewCache, previewImageFile, listDirectoryFiles, listTerminalFiles
+} = require('./main/files-operations');
+const { safeLabel } = require('./main/format-utils');
 const { MONITOR_INTERVAL_MS, createMonitoringSession, collectMonitoringSample } = require('./main/monitoring');
-const { CUSTOM_THEME_ID_PREFIX, validateThemeFile } = require('./main/theme-file-validator');
-const { collectTerminalMetadata, terminalWorkingDirectory } = require('./main/terminal-metadata');
+const { collectTerminalMetadata } = require('./main/terminal-metadata');
+const { ensureThemesDirectory, readCustomThemes } = require('./main/themes');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
 const isVisualTest = process.env.EDEX_VISUAL_TEST === '1';
@@ -53,31 +55,9 @@ let gracefulShutdownStarted = false;
 
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const MAX_TERMINALS_PER_WINDOW = 8;
-const MAX_FILE_ENTRIES = 80;
-const MAX_BATCH_ENTRIES = 200;
 const THEMES_DIR_NAME = 'themes';
-const MAX_THEME_FILES = 50;
-const EXAMPLE_THEME_FILE_NAME = 'example-theme.json';
-const EXAMPLE_THEME_CONTENT = {
-  name: 'RINZLER',
-  accent: { cyan: [210, 20, 20], cyanBright: [255, 130, 110], cyanDim: [110, 10, 10] },
-  terminalColor: { foreground: [255, 90, 70], cursor: [255, 170, 140] }
-};
-const IMAGE_PREVIEW_MAX_BYTES = 15 * 1024 * 1024;
 const IMAGE_PREVIEW_MAX_SOURCE_DIMENSION = 480;
-const IMAGE_PREVIEW_CACHE_LIMIT = 24;
-const IMAGE_PREVIEW_CACHE_MAX_BYTES = 48 * 1024 * 1024;
-const IMAGE_PREVIEW_MIME_TYPES = new Map([
-  ['.png', 'image/png'],
-  ['.jpg', 'image/jpeg'],
-  ['.jpeg', 'image/jpeg'],
-  ['.gif', 'image/gif'],
-  ['.webp', 'image/webp'],
-  ['.bmp', 'image/bmp'],
-  ['.svg', 'image/svg+xml']
-]);
-const imagePreviewCache = new Map();
-let imagePreviewCacheBytes = 0;
+const imagePreviewCache = createImagePreviewCache();
 
 if (isAutomatedTest) {
   const testKind = isSmokeTest ? 'smoke' : isAssistantVisualTest ? 'assistant' : isFilesTest ? 'files' : 'visual';
@@ -184,124 +164,6 @@ function ensureTerminalMetadataSession(webContents, activeSessionId) {
   return metadataSession;
 }
 
-function validDirectoryPath(value) {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 4_096
-    || value.includes('\0') || !path.isAbsolute(value)) return null;
-  return path.resolve(value);
-}
-
-// File-manager mutations arrive from the renderer, so every path is re-validated
-// here and never trusted as-is. The renderer itself never touches the disk.
-function validEntryPaths(value) {
-  const list = Array.isArray(value) ? value : [value];
-  if (list.length === 0 || list.length > MAX_BATCH_ENTRIES) return null;
-  const resolved = list.map((item) => validDirectoryPath(item));
-  return resolved.every(Boolean) ? [...new Set(resolved)] : null;
-}
-
-function validEntryName(value) {
-  if (typeof value !== 'string') return null;
-  const name = value.trim();
-  if (!name || name.length > 255 || name === '.' || name === '..') return null;
-  if (name.includes('\0') || name.includes('/')) return null;
-  return name;
-}
-
-async function pathExists(target) {
-  try {
-    await fs.promises.lstat(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Finder-style "name copy.ext" suffixing so a collision never silently overwrites.
-async function uniqueDestination(directory, name) {
-  const target = path.join(directory, name);
-  if (!await pathExists(target)) return target;
-  const extension = path.extname(name);
-  const stem = path.basename(name, extension);
-  for (let index = 2; index <= 999; index += 1) {
-    const candidate = path.join(directory, `${stem} ${index}${extension}`);
-    if (!await pathExists(candidate)) return candidate;
-  }
-  throw new Error('Could not find a free name in the destination folder.');
-}
-
-async function transferEntries(sourcePaths, destinationDirectory, mode) {
-  const destination = validDirectoryPath(destinationDirectory);
-  if (!destination) throw new Error('Invalid destination folder.');
-  const stats = await fs.promises.stat(destination).catch(() => null);
-  if (!stats?.isDirectory()) throw new Error('Destination is not a folder.');
-
-  const results = [];
-  for (const source of sourcePaths) {
-    const name = path.basename(source);
-    try {
-      if (source === destination || destination.startsWith(`${source}${path.sep}`)) {
-        throw new Error('Cannot move a folder into itself.');
-      }
-      if (path.dirname(source) === destination && mode === 'move') {
-        results.push({ path: source, status: 'skipped', reason: 'Already in destination.' });
-        continue;
-      }
-      const target = await uniqueDestination(destination, name);
-      if (mode === 'move') {
-        try {
-          await fs.promises.rename(source, target);
-        } catch (error) {
-          // EXDEV: crossing a volume boundary needs a copy followed by a delete.
-          if (error.code !== 'EXDEV') throw error;
-          await fs.promises.cp(source, target, { recursive: true, errorOnExist: true, force: false });
-          await fs.promises.rm(source, { recursive: true, force: false });
-        }
-      } else {
-        await fs.promises.cp(source, target, { recursive: true, errorOnExist: true, force: false });
-      }
-      results.push({ path: source, status: 'ok', target });
-    } catch (error) {
-      results.push({ path: source, status: 'error', reason: safeLabel(error.message, 'Operation failed.', 160) });
-    }
-  }
-  return { status: results.some((item) => item.status === 'error') ? 'partial' : 'ok', results };
-}
-
-function cachedImagePreview(cacheKey) {
-  const cached = imagePreviewCache.get(cacheKey);
-  if (!cached) return null;
-  imagePreviewCache.delete(cacheKey);
-  imagePreviewCache.set(cacheKey, cached);
-  return cached.response;
-}
-
-function cacheImagePreview(cacheKey, response) {
-  const bytes = Buffer.byteLength(response.dataUri || '', 'utf8');
-  if (bytes > IMAGE_PREVIEW_CACHE_MAX_BYTES) return;
-  const existing = imagePreviewCache.get(cacheKey);
-  if (existing) imagePreviewCacheBytes -= existing.bytes;
-  imagePreviewCache.set(cacheKey, { response, bytes });
-  imagePreviewCacheBytes += bytes;
-  while (imagePreviewCache.size > IMAGE_PREVIEW_CACHE_LIMIT
-    || imagePreviewCacheBytes > IMAGE_PREVIEW_CACHE_MAX_BYTES) {
-    const oldestKey = imagePreviewCache.keys().next().value;
-    const oldest = imagePreviewCache.get(oldestKey);
-    imagePreviewCache.delete(oldestKey);
-    imagePreviewCacheBytes -= oldest.bytes;
-  }
-}
-
-async function readBoundedFile(fileHandle, size) {
-  const buffer = Buffer.allocUnsafe(size);
-  let offset = 0;
-  while (offset < size) {
-    const { bytesRead } = await fileHandle.read(buffer, offset, size - offset, offset);
-    if (bytesRead === 0) break;
-    offset += bytesRead;
-  }
-  return offset === size ? buffer : buffer.subarray(0, offset);
-}
-
 function imagePreviewData(buffer, mimeType) {
   try {
     const decoded = nativeImage.createFromBuffer(buffer);
@@ -322,112 +184,6 @@ function imagePreviewData(buffer, mimeType) {
     // Chromium can still render supported image formats directly from a data URI.
   }
   return { dataUri: `data:${mimeType};base64,${buffer.toString('base64')}`, width: null, height: null };
-}
-
-async function previewImageFile(filePath) {
-  const normalizedPath = validDirectoryPath(filePath);
-  const mimeType = normalizedPath ? IMAGE_PREVIEW_MIME_TYPES.get(path.extname(normalizedPath).toLowerCase()) : null;
-  if (!normalizedPath || !mimeType) return { status: 'unsupported' };
-
-  let fileHandle;
-  try {
-    fileHandle = await fs.promises.open(normalizedPath, 'r');
-    const stats = await fileHandle.stat();
-    if (!stats.isFile()) return { status: 'unsupported' };
-    if (stats.size > IMAGE_PREVIEW_MAX_BYTES) {
-      return { status: 'too-large', maxBytes: IMAGE_PREVIEW_MAX_BYTES, size: stats.size };
-    }
-
-    const cacheKey = `${normalizedPath}\0${stats.size}\0${stats.mtimeMs}`;
-    const cached = cachedImagePreview(cacheKey);
-    if (cached) return cached;
-
-    const buffer = await readBoundedFile(fileHandle, stats.size);
-    const image = imagePreviewData(buffer, mimeType);
-    const response = {
-      status: 'ok',
-      ...image,
-      path: normalizedPath,
-      sourceBytes: buffer.length
-    };
-    cacheImagePreview(cacheKey, response);
-    return response;
-  } catch {
-    return { status: 'error' };
-  } finally {
-    await fileHandle?.close().catch(() => {});
-  }
-}
-
-async function enrichFileEntries(entries) {
-  return Promise.all(entries.map(async (entry) => {
-    try {
-      const stats = await fs.promises.lstat(entry.fullPath);
-      return {
-        ...entry,
-        sizeBytes: entry.type === 'file' ? Math.max(finiteNumber(stats.size, 0), 0) : null,
-        modifiedMs: finiteNumber(stats.mtimeMs, null)
-      };
-    } catch {
-      return { ...entry, sizeBytes: null, modifiedMs: null };
-    }
-  }));
-}
-
-async function listDirectoryFiles(cwd, sessionId, showHidden = false) {
-  try {
-    const directoryEntries = await fs.promises.readdir(cwd, { withFileTypes: true });
-    const entries = directoryEntries
-      .filter((entry) => showHidden || !entry.name.startsWith('.'))
-      .map((entry) => ({
-        name: safeLabel(entry.name, 'UNKNOWN', 96),
-        fullPath: path.join(cwd, entry.name),
-        type: entry.isDirectory() ? 'directory'
-          : entry.isSymbolicLink() ? 'link'
-            : entry.isFile() ? 'file' : 'other'
-      }))
-      .sort((left, right) => {
-        const leftDirectory = left.type === 'directory' ? 0 : 1;
-        const rightDirectory = right.type === 'directory' ? 0 : 1;
-        return leftDirectory - rightDirectory || left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
-      });
-
-    return {
-      status: 'ok',
-      sessionId,
-      cwd,
-      parentPath: cwd === path.parse(cwd).root ? null : path.dirname(cwd),
-      entries: await enrichFileEntries(entries.slice(0, MAX_FILE_ENTRIES)),
-      totalCount: entries.length,
-      truncated: entries.length > MAX_FILE_ENTRIES
-    };
-  } catch {
-    return {
-      status: 'error',
-      sessionId,
-      cwd: null,
-      parentPath: null,
-      entries: [],
-      totalCount: 0,
-      truncated: false
-    };
-  }
-}
-
-async function listTerminalFiles(terminal, sessionId, showHidden = false) {
-  try {
-    return listDirectoryFiles(await terminalWorkingDirectory(terminal), sessionId, showHidden);
-  } catch {
-    return {
-      status: 'error',
-      sessionId,
-      cwd: null,
-      parentPath: null,
-      entries: [],
-      totalCount: 0,
-      truncated: false
-    };
-  }
 }
 
 async function publishMonitoringSample(webContentsId) {
@@ -675,7 +431,7 @@ function registerFilesIpc() {
 
   ipcMain.handle('files:preview', async (event, payload = {}) => {
     requireTrustedSender(event);
-    return previewImageFile(payload.filePath);
+    return previewImageFile(payload.filePath, imagePreviewCache, imagePreviewData);
   });
 
   ipcMain.handle('files:open', async (event, payload = {}) => {
@@ -771,13 +527,6 @@ function registerFilesIpc() {
   });
 }
 
-function configureCloudProviders() {
-  const config = configStore.get();
-  providerRegistry.register(new OpenRouterProvider({ apiKey: config.secrets.openRouterApiKey }));
-  providerRegistry.register(new OpenCodeGoProvider({ apiKey: config.secrets.openCodeGoApiKey }));
-  return config;
-}
-
 function assistantRequestMap(webContents) {
   let requests = assistantRequests.get(webContents.id);
   if (!requests) {
@@ -795,94 +544,14 @@ function disposeAssistantRequests(webContentsId) {
   assistantRequests.delete(webContentsId);
 }
 
-function assistantErrorPayload(error) {
-  return {
-    type: 'error',
-    code: error?.code || 'ASSISTANT_ERROR',
-    message: typeof error?.message === 'string' ? error.message : 'Assistant request failed.',
-    provider: error?.provider || null,
-    status: error?.status || null,
-    retryAfter: error?.retryAfter || null
-  };
-}
-
-function requireConfiguredCloudProvider(provider, config) {
-  if (provider === PROVIDER_IDS.OPENROUTER && !config.secrets.openRouterApiKey) {
-    throw new Error('OpenRouter API key is not configured.');
-  }
-  if (provider === PROVIDER_IDS.OPENCODE_GO && !config.secrets.openCodeGoApiKey) {
-    throw new Error('OpenCode Go API key is not configured.');
-  }
-}
-
 function themesDirectory() {
   return path.join(app.getPath('userData'), THEMES_DIR_NAME);
-}
-
-// Runs once at startup. Only seeds the example file the very first time the
-// directory itself is created — a user who deletes the example later isn't
-// fighting the app recreating it on every launch.
-function ensureThemesDirectory() {
-  const directory = themesDirectory();
-  if (fs.existsSync(directory)) return;
-  try {
-    fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(
-      path.join(directory, EXAMPLE_THEME_FILE_NAME),
-      `${JSON.stringify(EXAMPLE_THEME_CONTENT, null, 2)}\n`,
-      'utf8'
-    );
-  } catch (error) {
-    console.error(`Could not create themes directory: ${error.message}`);
-  }
-}
-
-// The theme's own `name` is free text (any script, spaces) and isn't unique,
-// so the persisted id — the string that ends up in localStorage and has to
-// survive a rename/retitle — comes from the filename instead.
-function sanitizeThemeIdStem(fileName) {
-  const stem = path.basename(fileName, path.extname(fileName));
-  const cleaned = stem.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
-  return cleaned || 'theme';
-}
-
-// Re-reads the directory from disk on every call — the file set is tiny
-// (MAX_THEME_FILES caps it) and local, so there's no cache to keep in sync
-// and a file dropped in while the app is running is picked up on request.
-// A malformed file is skipped with a warning; it never takes the app down.
-function readCustomThemes() {
-  const directory = themesDirectory();
-  let entries;
-  try {
-    entries = fs.readdirSync(directory, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const themes = [];
-  for (const entry of entries) {
-    if (themes.length >= MAX_THEME_FILES) break;
-    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.json')) continue;
-    const filePath = path.join(directory, entry.name);
-    try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      const validated = validateThemeFile(parsed);
-      if (!validated) {
-        console.warn(`Skipping invalid theme file: ${entry.name}`);
-        continue;
-      }
-      themes.push({ id: `${CUSTOM_THEME_ID_PREFIX}${sanitizeThemeIdStem(entry.name)}`, ...validated });
-    } catch (error) {
-      console.warn(`Skipping unreadable theme file ${entry.name}: ${error.message}`);
-    }
-  }
-  return themes;
 }
 
 function registerThemesIpc() {
   ipcMain.handle('themes:list-custom', (event) => {
     requireTrustedSender(event);
-    return readCustomThemes();
+    return readCustomThemes(themesDirectory());
   });
 }
 
@@ -895,14 +564,14 @@ function registerAssistantIpc() {
   ipcMain.handle('settings:update', (event, patch) => {
     requireTrustedSender(event);
     const updated = configStore.update(patch);
-    configureCloudProviders();
+    configureCloudProviders(configStore, providerRegistry);
     return updated;
   });
 
   ipcMain.handle('assistant:list-models', async (event, payload = {}) => {
     requireTrustedSender(event);
     const provider = payload.provider;
-    const config = configureCloudProviders();
+    const config = configureCloudProviders(configStore, providerRegistry);
     requireConfiguredCloudProvider(provider, config);
     return providerRegistry.listModels(provider);
   });
@@ -910,7 +579,7 @@ function registerAssistantIpc() {
   ipcMain.handle('assistant:test-provider', async (event, payload = {}) => {
     requireTrustedSender(event);
     const providerId = payload.provider;
-    const config = configureCloudProviders();
+    const config = configureCloudProviders(configStore, providerRegistry);
     requireConfiguredCloudProvider(providerId, config);
     const provider = providerRegistry.get(providerId);
     if (typeof provider.testConnection === 'function') return provider.testConnection();
@@ -920,7 +589,7 @@ function registerAssistantIpc() {
 
   ipcMain.handle('assistant:start', async (event, payload = {}) => {
     requireTrustedSender(event);
-    const config = configureCloudProviders();
+    const config = configureCloudProviders(configStore, providerRegistry);
     const provider = config.selection.hudProvider;
     const model = config.selection.models[provider];
     requireConfiguredCloudProvider(provider, config);
@@ -1066,10 +735,10 @@ function migrateLegacyUserData() {
 
 app.whenReady().then(async () => {
   migrateLegacyUserData();
-  ensureThemesDirectory();
+  ensureThemesDirectory(themesDirectory());
   configStore = new ConfigStore(app.getPath('userData'));
   providerRegistry = new ProviderRegistry([new OllamaProvider(), new LMStudioProvider()]);
-  configureCloudProviders();
+  configureCloudProviders(configStore, providerRegistry);
   assistantService = new AssistantService({ registry: providerRegistry, configStore });
   localCliBridge = new LocalCliBridge({ userDataPath: app.getPath('userData'), assistantService, configStore });
   try {

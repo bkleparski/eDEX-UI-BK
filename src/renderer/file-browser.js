@@ -455,11 +455,156 @@ async function runFileOperation(label, task) {
   }
 }
 
+// window.edexCapabilities is set by both preload.js (Electron, every flag
+// true, zero behavior change) and web-preload.js (the web preview, every
+// flag false) — see src/preload.js and src/renderer/web-preload.js. Reading
+// a flag as `!== true` rather than `=== false` means a capability this
+// build doesn't know about yet defaults to "unavailable", not "available".
+function hasCapability(name) {
+  return window.edexCapabilities?.[name] === true;
+}
+
+// --- HUD-styled confirm/choose-directory dialogs ---------------------------
+// Electron keeps using its native dialog.showMessageBox/showOpenDialog
+// (window.filesApi.confirm/chooseDirectory) unconditionally — these two only
+// run when edexCapabilities.nativeDialogs is false (the web preview, which
+// has no native dialogs to call). Same popover pattern as the paste-warning
+// and rename popovers: an absolutely-positioned .hud-frame, Escape/backdrop
+// dismiss, a resolver stashed in module state.
+
+let hudConfirmResolve = null;
+
+function hideHudConfirm(confirmed) {
+  const popover = document.getElementById('hudConfirmPopover');
+  if (popover.hidden) return;
+  popover.hidden = true;
+  popover.setAttribute('aria-hidden', 'true');
+  const resolve = hudConfirmResolve;
+  hudConfirmResolve = null;
+  resolve?.({ confirmed });
+}
+
+function showHudConfirm({ message, detail, confirmLabel } = {}) {
+  return new Promise((resolve) => {
+    hudConfirmResolve = resolve;
+    document.getElementById('hudConfirmLabel').textContent = message || 'POTWIERDŹ OPERACJĘ?';
+    document.getElementById('hudConfirmDetail').textContent = detail || '';
+    document.getElementById('hudConfirmOk').textContent = confirmLabel || 'OK';
+    const popover = document.getElementById('hudConfirmPopover');
+    popover.hidden = false;
+    popover.setAttribute('aria-hidden', 'false');
+    document.getElementById('hudConfirmCancel').focus();
+  });
+}
+
+let hudDirectoryPickerResolve = null;
+let hudDirectoryPickerPath = null;
+
+async function loadHudDirectoryPickerEntries(directoryPath) {
+  const list = document.getElementById('hudDirectoryPickerList');
+  const selectButton = document.getElementById('hudDirectoryPickerSelect');
+  list.textContent = '';
+  selectButton.disabled = true;
+  const result = await window.filesApi.list(activeSessionId, directoryPath || null, false);
+  if (result?.status !== 'ok') {
+    document.getElementById('hudDirectoryPickerPath').textContent = directoryPath || '~';
+    const errorRow = document.createElement('div');
+    errorRow.className = 'hud-directory-picker-empty hud-label';
+    errorRow.textContent = 'NIE MOŻNA ODCZYTAĆ KATALOGU';
+    list.appendChild(errorRow);
+    return;
+  }
+  hudDirectoryPickerPath = result.cwd;
+  document.getElementById('hudDirectoryPickerPath').textContent = result.cwd;
+  selectButton.disabled = false;
+
+  if (result.parentPath) {
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.className = 'hud-directory-picker-row hud-label';
+    up.textContent = '.. (KATALOG NADRZĘDNY)';
+    up.addEventListener('click', () => loadHudDirectoryPickerEntries(result.parentPath));
+    list.appendChild(up);
+  }
+
+  const directories = result.entries.filter((entry) => entry.type === 'directory');
+  if (directories.length === 0 && !result.parentPath) {
+    const emptyRow = document.createElement('div');
+    emptyRow.className = 'hud-directory-picker-empty hud-label';
+    emptyRow.textContent = 'BRAK PODKATALOGÓW';
+    list.appendChild(emptyRow);
+  }
+  for (const entry of directories) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'hud-directory-picker-row hud-label';
+    row.textContent = entry.name;
+    row.addEventListener('click', () => loadHudDirectoryPickerEntries(entry.fullPath));
+    list.appendChild(row);
+  }
+}
+
+function hideHudDirectoryPicker(result) {
+  const popover = document.getElementById('hudDirectoryPickerPopover');
+  if (popover.hidden) return;
+  popover.hidden = true;
+  popover.setAttribute('aria-hidden', 'true');
+  const resolve = hudDirectoryPickerResolve;
+  hudDirectoryPickerResolve = null;
+  resolve?.(result);
+}
+
+function showHudDirectoryPicker(defaultPath) {
+  return new Promise((resolve) => {
+    hudDirectoryPickerResolve = resolve;
+    const popover = document.getElementById('hudDirectoryPickerPopover');
+    popover.hidden = false;
+    popover.setAttribute('aria-hidden', 'false');
+    loadHudDirectoryPickerEntries(defaultPath || currentDirectoryPath());
+  });
+}
+
+function initializeHudFileDialogs() {
+  document.getElementById('hudConfirmOk').addEventListener('click', () => hideHudConfirm(true));
+  document.getElementById('hudConfirmCancel').addEventListener('click', () => hideHudConfirm(false));
+  document.getElementById('hudDirectoryPickerCancel').addEventListener('click', () => hideHudDirectoryPicker({ status: 'cancelled' }));
+  document.getElementById('hudDirectoryPickerSelect').addEventListener('click', () => (
+    hideHudDirectoryPicker({ status: 'ok', directory: hudDirectoryPickerPath })
+  ));
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (!document.getElementById('hudConfirmPopover').hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideHudConfirm(false);
+    } else if (!document.getElementById('hudDirectoryPickerPopover').hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideHudDirectoryPicker({ status: 'cancelled' });
+    }
+  }, true);
+}
+
+// Electron keeps calling window.filesApi.confirm/chooseDirectory straight —
+// these two only route to the HUD dialogs above when there's no native
+// dialog to fall back to.
+function requestConfirmation(options) {
+  return hasCapability('nativeDialogs') ? window.filesApi.confirm(options) : showHudConfirm(options);
+}
+
+function requestDirectoryChoice(defaultPath) {
+  return hasCapability('nativeDialogs') ? window.filesApi.chooseDirectory(defaultPath) : showHudDirectoryPicker(defaultPath);
+}
+
 function openFileEntry(filePath, type) {
   if (!filePath) return;
   if (type === 'directory') {
     clearFileSelection();
     browseDirectory(filePath);
+    return;
+  }
+  if (!hasCapability('openFile')) {
+    setFileOperationStatus('OTWIERANIE PLIKÓW NIEDOSTĘPNE W PODGLĄDZIE WWW');
     return;
   }
   runFileOperation('OTWIERANIE…', async () => {
@@ -490,13 +635,17 @@ function showFileContextMenu(clientX, clientY) {
     copy: `KOPIUJ${suffix}`,
     move: `PRZENIEŚ…${suffix}`,
     reveal: 'POKAŻ W FINDERZE',
-    trash: `USUŃ DO KOSZA${suffix}`
+    // No OS Trash outside Electron — fs.rm is a permanent delete there, so
+    // the label says so instead of promising a Kosz that doesn't exist.
+    trash: hasCapability('trash') ? `USUŃ DO KOSZA${suffix}` : `USUŃ (NIEODWRACALNE)${suffix}`
   };
   for (const item of menu.querySelectorAll('[data-file-action]')) {
     const action = item.dataset.fileAction;
     item.textContent = labels[action] || item.textContent;
-    // Renaming and revealing only make sense for exactly one entry.
-    item.hidden = multiple && (action === 'rename' || action === 'reveal');
+    // Renaming only makes sense for exactly one entry; revealing in Finder
+    // needs both exactly one entry AND Electron.
+    item.hidden = (multiple && (action === 'rename' || action === 'reveal'))
+      || (action === 'reveal' && !hasCapability('reveal'));
   }
   menu.hidden = false;
   menu.setAttribute('aria-hidden', 'false');
@@ -557,7 +706,7 @@ function copyPathsToClipboard(paths) {
 
 function transferSelection(paths, mode) {
   runFileOperation(mode === 'copy' ? 'KOPIOWANIE…' : 'PRZENOSZENIE…', async () => {
-    const choice = await window.filesApi.chooseDirectory(currentDirectoryPath());
+    const choice = await requestDirectoryChoice(currentDirectoryPath());
     if (choice?.status !== 'ok') return null;
     const result = await window.filesApi.transfer(paths, choice.directory, mode);
     document.body.dataset.fileTransferCount = String((Number(document.body.dataset.fileTransferCount) || 0) + 1);
@@ -568,13 +717,16 @@ function transferSelection(paths, mode) {
 async function trashSelection(paths) {
   const hasDirectory = [...document.querySelectorAll('#fileList .file-row')]
     .some((row) => paths.includes(row.dataset.path) && row.dataset.type === 'directory');
-  if (hasDirectory || paths.length > 1) {
-    const confirmation = await window.filesApi.confirm({
-      message: paths.length > 1
-        ? `Przenieść ${paths.length} elementów do Kosza?`
-        : 'Przenieść katalog do Kosza?',
+  const permanent = !hasCapability('trash');
+  // Reversible (real OS Trash, Electron only) skips the prompt for a single
+  // file — irreversible (fs.rm, the web preview) always asks, no exceptions.
+  if (permanent || hasDirectory || paths.length > 1) {
+    const confirmation = await requestConfirmation({
+      message: permanent
+        ? (paths.length > 1 ? `Usunąć trwale ${paths.length} elementów? Tej operacji nie można cofnąć.` : 'Usunąć trwale ten element? Tej operacji nie można cofnąć.')
+        : (paths.length > 1 ? `Przenieść ${paths.length} elementów do Kosza?` : 'Przenieść katalog do Kosza?'),
       detail: paths.slice(0, 8).map((item) => item.split('/').pop()).join('\n'),
-      confirmLabel: 'Do Kosza'
+      confirmLabel: permanent ? 'Usuń trwale' : 'Do Kosza'
     });
     if (!confirmation?.confirmed) return;
   }
@@ -592,8 +744,13 @@ function runFileContextAction(action) {
   if (paths.length === 0) return;
   const row = [...document.querySelectorAll('#fileList .file-row')].find((item) => item.dataset.path === paths[0]);
   if (action === 'open') {
-    if (paths.length === 1) openFileEntry(paths[0], row?.dataset.type);
-    else paths.forEach((item) => window.filesApi.open(item).catch(() => {}));
+    if (paths.length === 1) {
+      openFileEntry(paths[0], row?.dataset.type);
+    } else if (hasCapability('openFile')) {
+      paths.forEach((item) => window.filesApi.open(item).catch(() => {}));
+    } else {
+      setFileOperationStatus('OTWIERANIE PLIKÓW NIEDOSTĘPNE W PODGLĄDZIE WWW');
+    }
   } else if (action === 'rename') {
     beginFileRename(paths[0]);
   } else if (action === 'insert') {
@@ -606,7 +763,7 @@ function runFileContextAction(action) {
   } else if (action === 'move') {
     transferSelection(paths, 'move');
   } else if (action === 'reveal') {
-    window.filesApi.reveal(paths[0]).catch(() => {});
+    if (hasCapability('reveal')) window.filesApi.reveal(paths[0]).catch(() => {});
   } else if (action === 'trash') {
     trashSelection(paths);
   }
@@ -924,6 +1081,10 @@ function initializeFileBrowser() {
     if (!menu.hidden && !menu.contains(event.target)) hideFileContextMenu();
     const popover = document.getElementById('fileRenamePopover');
     if (!popover.hidden && !popover.contains(event.target)) hideFileRename();
+    const confirmPopover = document.getElementById('hudConfirmPopover');
+    if (!confirmPopover.hidden && !confirmPopover.contains(event.target)) hideHudConfirm(false);
+    const directoryPopover = document.getElementById('hudDirectoryPickerPopover');
+    if (!directoryPopover.hidden && !directoryPopover.contains(event.target)) hideHudDirectoryPicker({ status: 'cancelled' });
   }, true);
 
   list.addEventListener('scroll', () => hideImagePreview('scroll'), { passive: true });
@@ -941,6 +1102,7 @@ function initializeFileBrowser() {
   updateSortIndicators();
   updateFileStatusBar();
   startFileBrowserPolling();
+  initializeHudFileDialogs();
   window.addEventListener('beforeunload', () => {
     stopFileBrowserPolling();
     stopFileBrowserWatching();

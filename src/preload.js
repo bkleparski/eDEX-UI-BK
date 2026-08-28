@@ -67,3 +67,13 @@ contextBridge.exposeInMainWorld('assistantApi', Object.freeze({
   openSource: (url) => ipcRenderer.invoke('assistant:open-source', { url }),
   onEvent: (callback) => subscribe('assistant:event', callback)
 }));
+
+// Electron has every OS-level feature — see src/renderer/web-preload.js's
+// version of this same global for what the web preview has to fall back to
+// instead (and file-browser.js for how it adapts its UI on these flags).
+contextBridge.exposeInMainWorld('edexCapabilities', Object.freeze({
+  trash: true,
+  reveal: true,
+  openFile: true,
+  nativeDialogs: true
+}));

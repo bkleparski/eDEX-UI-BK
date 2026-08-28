@@ -1620,6 +1620,67 @@ body.booting .boot-content--bottom {
   color: var(--amber);
 }
 
+/* HTML stand-in for window.filesApi.chooseDirectory's native Electron
+   dialog — web preview only, see file-browser.js's requestDirectoryChoice.
+   Centered/modal like .paste-warning-popover, just its own width/height
+   since it needs room for a scrolling directory list. */
+.hud-directory-picker {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  width: min(360px, 80vw);
+  gap: 8px;
+  padding: 12px;
+}
+
+#hudDirectoryPickerPath {
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-directory-picker-list {
+  display: grid;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .3);
+  background: rgb(0 0 0 / .5);
+}
+
+.hud-directory-picker-row {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgb(var(--cyan-dim-rgb) / .15);
+  padding: 7px 9px;
+  color: var(--text-primary);
+  background: transparent;
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hud-directory-picker-row:last-child {
+  border-bottom: 0;
+}
+
+.hud-directory-picker-row:hover,
+.hud-directory-picker-row:focus-visible {
+  color: var(--cyan-bright);
+  background: rgb(var(--cyan-rgb) / .1);
+  outline: 0;
+}
+
+.hud-directory-picker-empty {
+  padding: 10px;
+  color: var(--text-secondary);
+  font-size: 8px;
+  text-align: center;
+}
+
 .terminal-search {
   position: fixed;
   top: 0;

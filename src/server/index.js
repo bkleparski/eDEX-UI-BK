@@ -1,6 +1,6 @@
 'use strict';
 
-// EBARTNET-UI as a plain web page (Phase E1) — a Node http+ws server that
+// EBARTNET-UI as a plain web page — a Node http+ws server that
 // serves the same renderer files Electron loads from disk, but swaps the
 // `contextBridge` transport for a WebSocket. The renderer code itself never
 // changes: it always talks to `window.terminalApi` / `window.monitoringApi` /
@@ -18,8 +18,19 @@ const os = require('node:os');
 const path = require('node:path');
 const pty = require('node-pty');
 const { WebSocketServer } = require('ws');
+const { AssistantService } = require('../main/assistant/assistant-service');
+const { LMStudioProvider } = require('../main/assistant/lmstudio-provider');
+const { OllamaProvider } = require('../main/assistant/ollama-provider');
+const { configureCloudProviders, requireConfiguredCloudProvider, assistantErrorPayload } = require('../main/assistant/orchestration');
+const { ProviderRegistry } = require('../main/assistant/provider-registry');
+const { ConfigStore } = require('../main/config-store');
+const {
+  validDirectoryPath, validEntryPaths, validEntryName, pathExists, transferEntries, removeEntries,
+  createImagePreviewCache, defaultImagePreviewEncode, previewImageFile, listDirectoryFiles, listTerminalFiles
+} = require('../main/files-operations');
 const { createMonitoringSession, collectMonitoringSample, MONITOR_INTERVAL_MS } = require('../main/monitoring');
 const { collectTerminalMetadata } = require('../main/terminal-metadata');
+const { ensureThemesDirectory, readCustomThemes } = require('../main/themes');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const RENDERER_ROOT = path.join(PROJECT_ROOT, 'src', 'renderer');
@@ -32,6 +43,16 @@ const SHELL = process.env.EDEX_WEB_SHELL || '/bin/zsh';
 const TOKEN_COOKIE = 'edex_web_token';
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const MAX_TERMINALS_PER_CONNECTION = 8;
+const FILE_WATCH_DEBOUNCE_MS = 200;
+
+// Electron keeps its config/themes under Electron's own userData directory
+// (~/Library/Application Support/EBARTNET-UI); the web server has no such
+// thing, so it gets its own on-disk home instead — same shape (config.json +
+// themes/), same ConfigStore/themes.js code, different root.
+const DATA_DIR = process.env.EDEX_WEB_DATA
+  ? path.resolve(process.env.EDEX_WEB_DATA)
+  : path.join(os.homedir(), '.ebartnet-ui-web');
+const THEMES_DIR = path.join(DATA_DIR, 'themes');
 
 const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -42,6 +63,20 @@ const MIME_TYPES = new Map([
   ['.png', 'image/png'],
   ['.woff2', 'font/woff2']
 ]);
+
+fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+ensureThemesDirectory(THEMES_DIR);
+
+// One shared instance for the whole process — settings and assistant
+// conversations are server-wide, not per-browser-tab (there's exactly one
+// "web" user; each connection is just another tab open on the same session,
+// same as two Electron windows would share one app-wide config on disk).
+// LocalCliBridge (Electron's `search --lms` CLI shortcut, wired into the PTY
+// environment) has no web equivalent and is intentionally left out — see the
+// phase report.
+const configStore = new ConfigStore(DATA_DIR);
+const providerRegistry = new ProviderRegistry([new OllamaProvider(), new LMStudioProvider()]);
+const assistantService = new AssistantService({ registry: providerRegistry, configStore });
 
 function validSessionId(value) {
   return typeof value === 'string' && /^tty-[0-9]{2}$/.test(value) ? value : null;
@@ -196,8 +231,59 @@ function createConnectionState(ws) {
     metadataInFlight: false,
     monitoring: null,
     monitoringTimer: null,
-    monitoringInFlight: false
+    monitoringInFlight: false,
+    fileWatcher: null,
+    imagePreviewCache: createImagePreviewCache(),
+    assistantRequests: new Map()
   };
+}
+
+// --- File watching (fs.watch → files:changed push) ------------------------
+// Mirrors src/main.js's ensureFileWatcher/disposeFileWatcher exactly, just
+// keyed on this connection's own state object instead of a webContentsId
+// map — there's one browser tab's worth of state per WS connection, same as
+// one Electron window's worth of state per webContents.
+
+function disposeFileWatcher(state) {
+  const watcher = state.fileWatcher;
+  if (!watcher) return;
+  clearTimeout(watcher.debounceTimer);
+  try {
+    watcher.handle?.close();
+  } catch {
+    // Watcher may already be in a broken/closed state — nothing more to clean up.
+  }
+  state.fileWatcher = null;
+}
+
+// fs.watch (FSEvents on macOS) fires several events for a single file
+// operation — this collapses a burst into one push, ~200ms after it settles.
+function scheduleFileChangeNotification(state) {
+  const watcher = state.fileWatcher;
+  if (!watcher) return;
+  clearTimeout(watcher.debounceTimer);
+  watcher.debounceTimer = setTimeout(() => {
+    pushEvent(state.ws, 'files:changed', { cwd: watcher.watchedPath });
+  }, FILE_WATCH_DEBOUNCE_MS);
+}
+
+// Keeps at most one fs.watch per connection, pointed at whatever directory
+// files:list just resolved. Returns whether a live watcher now covers
+// `directoryPath`; the renderer falls back to fast polling when it doesn't.
+function ensureFileWatcher(state, directoryPath) {
+  if (state.fileWatcher?.watchedPath === directoryPath && state.fileWatcher.handle) return true;
+  disposeFileWatcher(state);
+
+  const watcher = { watchedPath: directoryPath, handle: null, debounceTimer: null };
+  try {
+    watcher.handle = fs.watch(directoryPath, { persistent: false }, () => scheduleFileChangeNotification(state));
+    watcher.handle.on('error', () => disposeFileWatcher(state));
+    state.fileWatcher = watcher;
+    return true;
+  } catch {
+    // EMFILE, ENOSPC, or a path fs.watch can't cover (some network mounts).
+    return false;
+  }
 }
 
 function disposeTerminal(state, sessionId) {
@@ -216,6 +302,9 @@ function disposeConnection(state) {
   clearInterval(state.metadataTimer);
   clearInterval(state.monitoringTimer);
   for (const sessionId of [...state.terminals.keys()]) disposeTerminal(state, sessionId);
+  disposeFileWatcher(state);
+  for (const controller of state.assistantRequests.values()) controller.abort();
+  state.assistantRequests.clear();
 }
 
 async function publishTerminalMetadata(state) {
@@ -257,21 +346,110 @@ async function publishMonitoringSample(state) {
   }
 }
 
-// Empty/rejection shapes below intentionally mirror what src/main.js already
-// returns for its own error paths (see files:list's `directoryPath` branch,
-// settings:get's default config) — the renderer already has to handle those,
-// so E1 leans on that instead of inventing a second "web stub" shape.
-const FILES_STUB_ERROR = Object.freeze({ status: 'error', cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false, watching: false });
-const SETTINGS_STUB = Object.freeze({
-  version: 1,
-  selection: { localProvider: 'ollama', hudProvider: 'ollama', models: { ollama: '', 'lm-studio': '', openrouter: '', 'opencode-go': '' } },
-  credentials: { braveConfigured: false, openRouterConfigured: false, openCodeGoConfigured: false }
-});
+// --- filesApi ---------------------------------------------------------
+// Same validation and directory-listing/transfer code src/main.js uses
+// (src/main/files-operations.js) — only two things differ from Electron:
+//  - image preview never downscales (no nativeImage outside Electron —
+//    defaultImagePreviewEncode just base64s the original bytes), and
+//  - trash is a real, permanent fs.rm (see removeEntries) instead of
+//    shell.trashItem, because there's no OS Trash to hand a browser tab's
+//    files to. The renderer only calls this permanent path when
+//    edexCapabilities.trash is false, and always confirms first — see
+//    file-browser.js's trashSelection().
 
-function assistantOfflineError(provider) {
-  const error = new Error(`${provider || 'assistant'} is unavailable in the web preview (Phase E1).`);
-  error.code = 'PROVIDER_OFFLINE';
-  return error;
+async function handleFilesList(state, [sessionId, directoryPath, showHidden]) {
+  const id = validSessionId(sessionId);
+  const hidden = showHidden === true;
+  if (!id) throw new Error('Invalid terminal session ID.');
+  let result;
+  if (directoryPath !== null && directoryPath !== undefined) {
+    const resolved = validDirectoryPath(directoryPath);
+    if (!resolved) {
+      return { status: 'error', sessionId: id, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false, watching: false };
+    }
+    result = await listDirectoryFiles(resolved, id, hidden);
+  } else {
+    const terminal = state.terminals.get(id);
+    if (!terminal) {
+      return { status: 'error', sessionId: id, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false, watching: false };
+    }
+    result = await listTerminalFiles(terminal, id, hidden);
+  }
+  result.watching = result.status === 'ok' ? ensureFileWatcher(state, result.cwd) : false;
+  return result;
+}
+
+function handleFilesRename(state, [filePath, name]) {
+  const [target] = validEntryPaths(filePath) || [];
+  const entryName = validEntryName(name);
+  if (!target || !entryName) throw new Error('Invalid rename request.');
+  const destination = path.join(path.dirname(target), entryName);
+  if (destination === target) return { status: 'ok', target };
+  return pathExists(destination).then((exists) => {
+    if (exists) throw new Error('A file with that name already exists.');
+    return fs.promises.rename(target, destination).then(() => ({ status: 'ok', target: destination }));
+  });
+}
+
+async function handleFilesRemove(state, [filePaths]) {
+  const targets = validEntryPaths(filePaths);
+  if (!targets) throw new Error('Invalid delete request.');
+  return removeEntries(targets);
+}
+
+async function handleFilesTransfer(state, [filePaths, destination, mode]) {
+  const targets = validEntryPaths(filePaths);
+  const transferMode = mode === 'copy' ? 'copy' : 'move';
+  if (!targets) throw new Error('Invalid transfer request.');
+  return transferEntries(targets, destination, transferMode);
+}
+
+async function handleFilesMkdir(state, [parentPath, name]) {
+  const parent = validDirectoryPath(parentPath);
+  const entryName = validEntryName(name);
+  if (!parent || !entryName) throw new Error('Invalid folder request.');
+  const destination = path.join(parent, entryName);
+  if (await pathExists(destination)) throw new Error('That folder already exists.');
+  await fs.promises.mkdir(destination);
+  return { status: 'ok', target: destination };
+}
+
+// --- assistantApi -------------------------------------------------------
+// Reuses AssistantService/ProviderRegistry exactly as src/main.js does —
+// only the transport differs (WS push instead of webContents.send). Requests
+// are tracked per-connection in state.assistantRequests so a cancel or a
+// dropped socket only ever aborts that browser tab's own in-flight request.
+
+async function handleAssistantStart(state, [request = {}]) {
+  const config = configureCloudProviders(configStore, providerRegistry);
+  const provider = config.selection.hudProvider;
+  const model = config.selection.models[provider];
+  requireConfiguredCloudProvider(provider, config);
+  if (!model) throw new Error(`No active model selected for ${provider}.`);
+  const requestId = typeof request.requestId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(request.requestId)
+    ? request.requestId
+    : `hud-${crypto.randomUUID()}`;
+  if (state.assistantRequests.has(requestId)) throw new Error('Assistant request ID is already active.');
+  const controller = new AbortController();
+  state.assistantRequests.set(requestId, controller);
+  const onEvent = (assistantEvent) => pushEvent(state.ws, 'assistant:event', assistantEvent);
+  try {
+    return await assistantService.run({
+      requestId,
+      conversationId: request.conversationId,
+      prompt: request.prompt,
+      mode: request.mode,
+      surface: 'hud',
+      provider,
+      model
+    }, { signal: controller.signal, onEvent });
+  } catch (error) {
+    const failure = assistantErrorPayload(error);
+    onEvent({ requestId, ...failure });
+    return { ok: false, requestId, error: failure };
+  } finally {
+    state.assistantRequests.delete(requestId);
+  }
 }
 
 async function handleTerminalStart(state, args) {
@@ -342,32 +520,56 @@ const HANDLERS = {
     state.monitoringTimer = null;
   },
 
-  // Full filesApi/settingsApi/assistantApi wiring is out of scope for E1 —
-  // see the phase report. These stubs return the same "nothing here" shapes
-  // the Electron IPC layer already returns on its own error paths, so the
-  // renderer's existing empty/error handling covers the web preview too.
-  'filesApi:list': (state, [sessionId]) => ({ ...FILES_STUB_ERROR, sessionId: validSessionId(sessionId) }),
-  'filesApi:preview': () => { throw new Error('File preview is not available in the web preview (Phase E1).'); },
-  'filesApi:open': () => { throw new Error('Opening files is not available in the web preview (Phase E1).'); },
-  'filesApi:reveal': () => { throw new Error('Revealing files is not available in the web preview (Phase E1).'); },
-  'filesApi:rename': () => { throw new Error('Renaming is not available in the web preview (Phase E1).'); },
-  'filesApi:trash': () => { throw new Error('Trashing files is not available in the web preview (Phase E1).'); },
-  'filesApi:transfer': () => { throw new Error('File transfer is not available in the web preview (Phase E1).'); },
-  'filesApi:makeDirectory': () => { throw new Error('Creating folders is not available in the web preview (Phase E1).'); },
-  'filesApi:chooseDirectory': () => null,
+  'filesApi:list': (state, args) => handleFilesList(state, args),
+  'filesApi:preview': (state, [filePath]) => previewImageFile(filePath, state.imagePreviewCache, defaultImagePreviewEncode),
+  // No shell.openPath/showItemInFolder outside Electron — gated client-side
+  // by edexCapabilities.openFile/reveal (see file-browser.js), these are a
+  // defensive fallback in case the UI ever calls them anyway.
+  'filesApi:open': () => { throw new Error('Opening files is not available in the web preview.'); },
+  'filesApi:reveal': () => { throw new Error('Revealing files in Finder is not available in the web preview.'); },
+  'filesApi:rename': (state, args) => handleFilesRename(state, args),
+  // Permanent delete (fs.rm) — see handleFilesRemove's comment above. Gated
+  // client-side by edexCapabilities.trash + an always-shown confirmation.
+  'filesApi:trash': (state, args) => handleFilesRemove(state, args),
+  'filesApi:transfer': (state, args) => handleFilesTransfer(state, args),
+  'filesApi:makeDirectory': (state, args) => handleFilesMkdir(state, args),
+  // Native OS pickers/dialogs don't exist in a browser — edexCapabilities.
+  // nativeDialogs is false in web mode, so file-browser.js shows its own
+  // HUD-styled directory picker / confirm popover instead of ever calling
+  // these two.
+  'filesApi:chooseDirectory': () => ({ status: 'cancelled' }),
   'filesApi:confirm': () => ({ confirmed: false }),
-  'filesApi:unwatch': () => {},
+  'filesApi:unwatch': (state) => disposeFileWatcher(state),
 
-  'themesApi:listCustom': () => [],
+  'themesApi:listCustom': () => readCustomThemes(THEMES_DIR),
 
-  'settingsApi:get': () => SETTINGS_STUB,
-  'settingsApi:update': () => SETTINGS_STUB,
+  'settingsApi:get': () => configStore.getPublic(),
+  'settingsApi:update': (state, [patch]) => {
+    const updated = configStore.update(patch);
+    configureCloudProviders(configStore, providerRegistry);
+    return updated;
+  },
 
-  'assistantApi:listModels': (state, [provider]) => { throw assistantOfflineError(provider); },
-  'assistantApi:testProvider': (state, [provider]) => { throw assistantOfflineError(provider); },
-  'assistantApi:start': (state, [request]) => { throw assistantOfflineError(request?.provider); },
-  'assistantApi:cancel': () => {},
-  'assistantApi:reset': () => {},
+  'assistantApi:listModels': (state, [provider]) => {
+    const config = configureCloudProviders(configStore, providerRegistry);
+    requireConfiguredCloudProvider(provider, config);
+    return providerRegistry.listModels(provider);
+  },
+  'assistantApi:testProvider': async (state, [providerId]) => {
+    const config = configureCloudProviders(configStore, providerRegistry);
+    requireConfiguredCloudProvider(providerId, config);
+    const provider = providerRegistry.get(providerId);
+    if (typeof provider.testConnection === 'function') return provider.testConnection();
+    const models = await provider.listModels();
+    return { ok: true, modelCount: models.length };
+  },
+  'assistantApi:start': (state, args) => handleAssistantStart(state, args),
+  'assistantApi:cancel': (state, [requestId]) => {
+    if (typeof requestId === 'string') state.assistantRequests.get(requestId)?.abort();
+  },
+  'assistantApi:reset': (state, [conversationId]) => {
+    if (typeof conversationId === 'string') assistantService.resetConversation(conversationId);
+  },
   'assistantApi:openSource': () => ({ opened: false })
 };
 
@@ -402,6 +604,6 @@ wss.on('connection', (ws) => {
 
 server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}/?token=${TOKEN}`;
-  console.log('EBARTNET-UI web preview (Phase E1) listening.');
+  console.log('EBARTNET-UI web preview listening.');
   console.log(url);
 });

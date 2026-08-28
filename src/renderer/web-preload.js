@@ -129,10 +129,12 @@
     onData: (callback) => subscribe('monitoring:data', callback)
   }));
 
-  // Phase E1 stub — see src/server/index.js's HANDLERS map. Directory
-  // listing always comes back as the same empty/"error" shape the Electron
-  // IPC layer already returns for its own error paths, so the file browser
-  // shows its existing empty state instead of crashing.
+  // list/rename/transfer/makeDirectory/preview are backed by the same
+  // src/main/files-operations.js code Electron uses — see
+  // src/server/index.js's HANDLERS map. open/reveal/chooseDirectory/confirm
+  // have no browser equivalent (shell.openPath, Finder, native dialogs) —
+  // file-browser.js checks edexCapabilities below and never calls them in
+  // web mode, so their handlers only exist as a defensive fallback.
   contextBridgeShim('filesApi', Object.freeze({
     list: (sessionId, directoryPath = null, showHidden = false) => (
       invoke('filesApi', 'list', [sessionId, directoryPath, showHidden === true])
@@ -163,10 +165,9 @@
     update: (patch) => invoke('settingsApi', 'update', [patch])
   }));
 
-  // Stub — the AI assistant needs its provider HTTP calls made from a
-  // trusted server context (API keys), which E1 doesn't wire up yet. Every
-  // call rejects with a PROVIDER_OFFLINE-shaped error so assistant-ui.js's
-  // existing "provider unavailable" handling covers it.
+  // Backed by the same AssistantService/ProviderRegistry Electron uses (see
+  // src/main/assistant/orchestration.js) — only the local CLI bridge
+  // (Electron's `search --lms` shortcut) has no web equivalent.
   contextBridgeShim('assistantApi', Object.freeze({
     listModels: (provider) => invoke('assistantApi', 'listModels', [provider]),
     testProvider: (provider) => invoke('assistantApi', 'testProvider', [provider]),
@@ -182,6 +183,17 @@
       return Promise.resolve({ opened: true });
     },
     onEvent: (callback) => subscribe('assistant:event', callback)
+  }));
+
+  // Tells file-browser.js (and anything else that cares) which OS-level
+  // features have no browser equivalent, so it can adapt its own UI instead
+  // of calling an API that will just throw. src/preload.js exposes the same
+  // object with every flag true — Electron's behavior never changes.
+  contextBridgeShim('edexCapabilities', Object.freeze({
+    trash: false,
+    reveal: false,
+    openFile: false,
+    nativeDialogs: false
   }));
 
   // contextBridge.exposeInMainWorld isn't available outside Electron's
