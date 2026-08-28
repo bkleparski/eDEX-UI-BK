@@ -1750,9 +1750,18 @@ body.system-group-hidden .system-group {
 }
 
 /* GPU block adds a heading + sparkline + detail row — grow the column so it
-   doesn't get clipped by .section-body's overflow:hidden. */
+   doesn't get clipped by .section-body's overflow:hidden. flex-shrink:0 pins
+   this height even under pressure, so MEMORY never pays for TOP PROCESSES
+   losing room below — the deficit lands on .network-section instead, which
+   degrades gracefully (fewer process rows, own overflow:hidden as a floor). */
 .system-section:has(#gpuBlock:not([hidden])) {
-  flex-basis: 350px;
+  flex-basis: 325px;
+  flex-shrink: 0;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .disk-section,
+.telemetry-column:has(#gpuBlock:not([hidden])) .time-section {
+  flex-shrink: 0;
 }
 
 .network-section {
@@ -1886,6 +1895,17 @@ body.system-group-hidden .system-group {
 
 .cpu-block {
   height: 86px;
+}
+
+/* A few spare px inside SYSTEM for the new GPU block — the per-core bars
+   stay legible smaller, this isn't the section fighting NETWORK for room. */
+.telemetry-column:has(#gpuBlock:not([hidden])) .cpu-block {
+  height: 78px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .core-grid {
+  height: 8px;
+  margin-top: 2px;
 }
 
 .gpu-block {
@@ -2049,6 +2069,40 @@ body.system-group-hidden .system-group {
 .sparkline--network {
   height: 31px;
   margin-top: 6px;
+}
+
+/* GPU block eats into .network-section's share of the column — reuse this
+   file's own tightest proven compaction (see @media max-height:700px below)
+   so NETWORK's fixed chrome gives TOP PROCESSES enough room for 6-7 rows. */
+.telemetry-column:has(#gpuBlock:not([hidden])) .network-status-grid {
+  gap: 2px 8px;
+  padding-block: 2px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .network-status-item {
+  gap: 1px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .network-summary {
+  padding-block: 2px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .sparkline--network {
+  height: 8px;
+  margin-top: 1px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .process-block {
+  padding-top: 2px;
+  min-height: 118px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .process-heading {
+  padding-bottom: 2px;
+}
+
+.telemetry-column:has(#gpuBlock:not([hidden])) .process-list {
+  margin-top: 1px;
 }
 
 .disk-pairs {
