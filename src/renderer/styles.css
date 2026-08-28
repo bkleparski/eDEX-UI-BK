@@ -579,6 +579,10 @@ body.system-panel-hidden.network-panel-hidden .workspace {
   margin-top: 10px;
 }
 
+.gpu-detail {
+  margin-top: 8px;
+}
+
 .core-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(5px, 1fr));
@@ -724,6 +728,37 @@ body.system-panel-hidden.network-panel-hidden .workspace {
 .process-cpu {
   color: var(--text-bright);
   text-align: right;
+}
+
+.process-sort {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.process-sort-btn {
+  appearance: none;
+  border: 1px solid rgb(var(--cyan-dim-rgb) / .32);
+  padding: 2px 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-family: var(--font-hud-label);
+  font-size: 8px;
+  letter-spacing: .1em;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.process-sort-btn:hover {
+  border-color: rgb(var(--cyan-rgb) / .75);
+  color: var(--text-bright);
+}
+
+.process-sort-btn.is-active {
+  color: var(--cyan-bright);
+  background: rgb(var(--cyan-rgb) / .1);
+  border-color: rgb(var(--cyan-rgb) / .75);
+  text-shadow: 0 0 3px rgb(var(--cyan-rgb) / .24);
 }
 
 .process-empty,
@@ -1714,6 +1749,12 @@ body.system-group-hidden .system-group {
   flex-basis: 300px;
 }
 
+/* GPU block adds a heading + sparkline + detail row — grow the column so it
+   doesn't get clipped by .section-body's overflow:hidden. */
+.system-section:has(#gpuBlock:not([hidden])) {
+  flex-basis: 350px;
+}
+
 .network-section {
   flex: 1 1 278px;
   min-height: 0;
@@ -1845,6 +1886,11 @@ body.system-group-hidden .system-group {
 
 .cpu-block {
   height: 86px;
+}
+
+.gpu-block {
+  height: auto;
+  padding-bottom: 4px;
 }
 
 .memory-block {
@@ -2164,6 +2210,10 @@ body.file-browser-dragging * {
 
   .system-section {
     flex-basis: 272px;
+  }
+
+  .system-section:has(#gpuBlock:not([hidden])) {
+    flex-basis: 345px;
   }
 
   .network-section {

@@ -65,6 +65,20 @@
                   <div class="core-grid" id="cpuCores" aria-label="Obciążenie rdzeni CPU"></div>
                 </div>
 
+                <div class="metric-block gpu-block" id="gpuBlock" aria-labelledby="gpuMetricTitle" hidden>
+                  <div class="metric-heading">
+                    <span class="hud-label" id="gpuMetricTitle">GPU LOAD</span>
+                    <span class="metric-value" id="gpuValue">--</span>
+                  </div>
+                  <svg class="sparkline" viewBox="0 0 100 34" preserveAspectRatio="none" role="img" aria-label="Historia obciążenia GPU">
+                    <polyline id="gpuSparkline" points="0,34 100,34"></polyline>
+                  </svg>
+                  <div class="metric-pairs hud-label gpu-detail">
+                    <span>RENDER <strong id="gpuRenderer">--</strong></span>
+                    <span>TILER <strong id="gpuTiler">--</strong></span>
+                  </div>
+                </div>
+
                 <div class="metric-block memory-block" aria-labelledby="memoryMetricTitle">
                   <div class="metric-heading">
                     <span class="hud-label" id="memoryMetricTitle">MEMORY</span>
@@ -169,7 +183,14 @@
                 <div class="process-block" aria-labelledby="processMetricTitle">
                   <div class="metric-heading process-heading">
                     <span class="hud-label" id="processMetricTitle">TOP PROCESSES</span>
-                    <span class="hud-label">CPU</span>
+                    <div class="process-sort" role="group" aria-label="Sortowanie procesów">
+                      <button class="process-sort-btn hud-label is-active" type="button" data-sort-key="cpuPercent"
+                        aria-pressed="true">CPU</button>
+                      <button class="process-sort-btn hud-label" type="button" data-sort-key="memoryPercent"
+                        aria-pressed="false">MEM</button>
+                      <button class="process-sort-btn hud-label" type="button" data-sort-key="energyImpact"
+                        aria-pressed="false" title="Zużycie energii — najbliższy dostępny wskaźnik obciążenia GPU per proces">ENERGY</button>
+                    </div>
                   </div>
                   <ol class="process-list" id="processList">
                     <li class="process-empty hud-label">AWAITING DATA</li>

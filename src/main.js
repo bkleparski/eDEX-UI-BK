@@ -52,6 +52,9 @@ const DISK_REFRESH_TICKS = 10;
 const CONNECTIVITY_REFRESH_TICKS = 7;
 const BATTERY_REFRESH_TICKS = 30;
 const PROCESS_LIST_LIMIT = 14;
+const PROCESS_ENERGY_LIMIT = 40;
+const PROCESS_ENERGY_REFRESH_TICKS = 9;
+const GPU_REFRESH_TICKS = 3;
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const PUBLIC_IP_CACHE_MS = 5 * 60 * 1_000;
 const PUBLIC_IP_TIMEOUT_MS = 3_000;
@@ -624,7 +627,52 @@ async function collectDiskMetric() {
   };
 }
 
-async function collectProcessesMetric() {
+function runCommand(command, args, timeout = 8_000) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout, maxBuffer: 2 * 1024 * 1024 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout);
+    });
+  });
+}
+
+// Per-process GPU use needs root on macOS, but the accelerator's own counters
+// are world-readable — so the HUD reports GPU load for the device, not per app.
+async function collectGpuMetric() {
+  const stdout = await runCommand('ioreg', ['-r', '-d', '1', '-c', 'IOAccelerator', '-w', '0'], 2_000);
+  const statistics = stdout.match(/"PerformanceStatistics"\s*=\s*\{([^}]*)\}/);
+  if (!statistics) throw new Error('No accelerator statistics');
+  const readPercent = (label) => {
+    const match = statistics[1].match(new RegExp(`"${label}"\\s*=\\s*(\\d+)`));
+    return match ? clampPercent(Number(match[1])) : null;
+  };
+  const utilizationPercent = readPercent('Device Utilization %');
+  if (utilizationPercent === null) throw new Error('No GPU utilization');
+  return {
+    utilizationPercent,
+    rendererPercent: readPercent('Renderer Utilization %'),
+    tilerPercent: readPercent('Tiler Utilization %')
+  };
+}
+
+// `top` reports energy impact only from its second sample on, so this costs a
+// second of wall time and runs on its own slow cadence, off the telemetry tick.
+async function collectProcessEnergy() {
+  const stdout = await runCommand('top', [
+    '-l', '2', '-s', '1', '-n', String(PROCESS_ENERGY_LIMIT),
+    '-o', 'power', '-stats', 'pid,power'
+  ]);
+  const samples = stdout.split(/^Processes:/m);
+  const energyByPid = new Map();
+  for (const line of (samples[samples.length - 1] || stdout).split('\n')) {
+    const match = line.match(/^\s*(\d+)\s+([\d.]+)\s*$/);
+    if (match) energyByPid.set(Number(match[1]), Math.max(Number(match[2]), 0));
+  }
+  if (energyByPid.size === 0) throw new Error('No energy impact reported');
+  return energyByPid;
+}
+
+async function collectProcessesMetric(energyByPid) {
   const result = await si.processes();
   if (!Array.isArray(result.list)) throw new Error('No process list');
 
@@ -632,15 +680,49 @@ async function collectProcessesMetric() {
     .map((processInfo) => ({
       name: safeLabel(path.basename(processInfo.name || ''), 'UNKNOWN', 34),
       cpuPercent: Math.max(finiteNumber(processInfo.cpu, 0), 0),
-      memoryPercent: clampPercent(processInfo.mem) ?? 0
+      memoryPercent: clampPercent(processInfo.mem) ?? 0,
+      energyImpact: energyByPid?.get(processInfo.pid) ?? null
     }))
     .filter((processInfo) => processInfo.name !== 'UNKNOWN')
-    .sort((left, right) => right.cpuPercent - left.cpuPercent || right.memoryPercent - left.memoryPercent)
-    .slice(0, PROCESS_LIST_LIMIT);
+    .sort((left, right) => right.cpuPercent - left.cpuPercent || right.memoryPercent - left.memoryPercent);
+}
+
+// The renderer re-sorts by whichever column is selected, so the payload carries
+// the leaders of every column — otherwise a memory hog with idle CPU would never
+// reach the list to be sorted into view.
+function topProcessesForEveryColumn(processes) {
+  const selected = new Map();
+  const take = (key) => [...processes]
+    .sort((left, right) => (right[key] ?? 0) - (left[key] ?? 0))
+    .slice(0, PROCESS_LIST_LIMIT)
+    .forEach((processInfo) => selected.set(processInfo, true));
+  take('cpuPercent');
+  take('memoryPercent');
+  take('energyImpact');
+  return [...selected.keys()];
 }
 
 function rejectedMessage(result) {
   return result.status === 'rejected' ? safeLabel(result.reason?.message, 'Unavailable', 80) : null;
+}
+
+// Fire-and-forget: the energy sampler takes a second, so a tick never waits for
+// it — it publishes into the cache and the next process refresh picks it up.
+function refreshProcessEnergy(session) {
+  if (session.energyInFlight) return;
+  if (session.cache.energyByPid && session.tick % PROCESS_ENERGY_REFRESH_TICKS !== 0) return;
+  session.energyInFlight = true;
+  collectProcessEnergy()
+    .then((energyByPid) => {
+      session.cache.energyByPid = energyByPid;
+      session.cache.energyError = null;
+    })
+    .catch((error) => {
+      session.cache.energyError = safeLabel(error?.message, 'Unavailable', 80);
+    })
+    .finally(() => {
+      session.energyInFlight = false;
+    });
 }
 
 async function collectMonitoringSample(session) {
@@ -648,14 +730,17 @@ async function collectMonitoringSample(session) {
   const refreshDisk = !session.cache.disk || session.tick % DISK_REFRESH_TICKS === 0;
   const refreshConnectivity = !session.cache.connectivity || session.tick % CONNECTIVITY_REFRESH_TICKS === 0;
   const refreshBattery = !session.cache.battery || session.tick % BATTERY_REFRESH_TICKS === 0;
-  const [cpuResult, memoryResult, networkResult, diskResult, processesResult, connectivityResult, batteryResult] = await Promise.allSettled([
+  const refreshGpu = !session.cache.gpu || session.tick % GPU_REFRESH_TICKS === 0;
+  refreshProcessEnergy(session);
+  const [cpuResult, memoryResult, networkResult, diskResult, processesResult, connectivityResult, batteryResult, gpuResult] = await Promise.allSettled([
     si.currentLoad(),
     si.mem(),
     collectNetworkMetric(session.cache.connectivity?.interface),
     refreshDisk ? collectDiskMetric() : Promise.resolve(session.cache.disk),
-    refreshProcesses ? collectProcessesMetric() : Promise.resolve(session.cache.processes),
+    refreshProcesses ? collectProcessesMetric(session.cache.energyByPid) : Promise.resolve(session.cache.processes),
     refreshConnectivity ? collectConnectivityMetric() : Promise.resolve(session.cache.connectivity),
-    refreshBattery ? collectBatteryMetric() : Promise.resolve(session.cache.battery)
+    refreshBattery ? collectBatteryMetric() : Promise.resolve(session.cache.battery),
+    refreshGpu ? collectGpuMetric() : Promise.resolve(session.cache.gpu)
   ]);
 
   const cpu = cpuResult.status === 'fulfilled' ? {
@@ -702,6 +787,8 @@ async function collectMonitoringSample(session) {
   if (connectivityResult.status === 'fulfilled') session.cache.connectivity = connectivity;
   if (batteryResult.status === 'fulfilled') session.cache.battery = battery;
 
+  const gpu = gpuResult.status === 'fulfilled' ? gpuResult.value : session.cache.gpu || null;
+  if (gpuResult.status === 'fulfilled') session.cache.gpu = gpu;
   const errors = {
     cpu: rejectedMessage(cpuResult),
     memory: rejectedMessage(memoryResult),
@@ -727,7 +814,9 @@ async function collectMonitoringSample(session) {
     connectivity: connectivity || { state: 'offline', interface: null, lanIpv4: null, publicIpv4: null, latencyMs: null },
     battery: battery || { hasBattery: false },
     disk: disk || null,
-    processes: processes || [],
+    gpu,
+    processes: topProcessesForEveryColumn(processes || []),
+    energyAvailable: Boolean(session.cache.energyByPid),
     errors
   };
 }
@@ -763,7 +852,7 @@ function registerMonitoringIpc() {
       timer: null,
       inFlight: false,
       tick: 0,
-      cache: { disk: null, processes: null, connectivity: null, battery: null }
+      cache: { disk: null, processes: null, connectivity: null, battery: null, energyByPid: null, energyError: null, gpu: null }
     };
     monitoringSessions.set(webContentsId, session);
     event.sender.once('destroyed', () => disposeMonitoring(webContentsId));

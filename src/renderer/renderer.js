@@ -88,8 +88,14 @@ let rendererShuttingDown = false;
 const telemetryHistory = {
   cpu: [],
   networkDown: [],
-  networkUp: []
+  networkUp: [],
+  gpu: []
 };
+// Mirrors PROCESS_LIST_LIMIT in src/main.js — the payload carries leaders of
+// every sortable column (up to ~3x this), so the renderer re-trims after sorting.
+const PROCESS_LIST_LIMIT = 14;
+let processSortKey = 'cpuPercent';
+let lastProcesses = [];
 const imagePreviewCache = new Map();
 let imagePreviewCacheChars = 0;
 
@@ -210,7 +216,28 @@ function renderCoreLoads(cores) {
   });
 }
 
-function renderProcesses(processes) {
+// Nulls (no energy sample yet for that pid) always sort to the bottom,
+// regardless of sort direction — there's only one direction, descending.
+function sortProcesses(processes, sortKey) {
+  return [...processes].sort((left, right) => {
+    const leftValue = numeric(left[sortKey]);
+    const rightValue = numeric(right[sortKey]);
+    if (leftValue === null && rightValue === null) return 0;
+    if (leftValue === null) return 1;
+    if (rightValue === null) return -1;
+    return rightValue - leftValue;
+  });
+}
+
+function formatProcessValue(processInfo, sortKey) {
+  if (sortKey === 'energyImpact') {
+    const value = numeric(processInfo.energyImpact);
+    return value === null ? '--' : value.toFixed(1);
+  }
+  return formatPercent(processInfo[sortKey], 1);
+}
+
+function renderProcesses(processes, sortKey = processSortKey) {
   const list = document.getElementById('processList');
   list.replaceChildren();
   if (!Array.isArray(processes) || processes.length === 0) {
@@ -221,7 +248,8 @@ function renderProcesses(processes) {
     return;
   }
 
-  processes.forEach((processInfo, index) => {
+  const visible = sortProcesses(processes, sortKey).slice(0, PROCESS_LIST_LIMIT);
+  visible.forEach((processInfo, index) => {
     const row = document.createElement('li');
     row.className = 'process-row';
 
@@ -234,12 +262,29 @@ function renderProcesses(processes) {
     name.textContent = typeof processInfo.name === 'string' ? processInfo.name : 'UNKNOWN';
     name.title = name.textContent;
 
-    const cpu = document.createElement('span');
-    cpu.className = 'process-cpu';
-    cpu.textContent = formatPercent(processInfo.cpuPercent, 1);
+    const value = document.createElement('span');
+    value.className = 'process-cpu';
+    value.textContent = formatProcessValue(processInfo, sortKey);
 
-    row.append(rank, name, cpu);
+    row.append(rank, name, value);
     list.append(row);
+  });
+}
+
+function setProcessSortKey(sortKey) {
+  if (sortKey === processSortKey) return;
+  processSortKey = sortKey;
+  document.querySelectorAll('.process-sort-btn').forEach((button) => {
+    const isActive = button.dataset.sortKey === sortKey;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
+  renderProcesses(lastProcesses, processSortKey);
+}
+
+function initializeProcessSort() {
+  document.querySelectorAll('.process-sort-btn').forEach((button) => {
+    button.addEventListener('click', () => setProcessSortKey(button.dataset.sortKey));
   });
 }
 
@@ -322,7 +367,20 @@ function renderMonitoring(sample) {
   document.getElementById('diskAvailable').textContent = formatCapacity(sample.disk?.availableBytes);
   setMeter('diskMeter', sample.disk?.usePercent);
   setWarningState(document.getElementById('diskSection'), numeric(sample.disk?.usePercent) > 90);
-  renderProcesses(sample.processes);
+
+  const gpuBlock = document.getElementById('gpuBlock');
+  const hasGpu = sample.gpu && numeric(sample.gpu.utilizationPercent) !== null;
+  gpuBlock.hidden = !hasGpu;
+  if (hasGpu) {
+    document.getElementById('gpuValue').textContent = formatPercent(sample.gpu.utilizationPercent, 1);
+    document.getElementById('gpuRenderer').textContent = formatPercent(sample.gpu.rendererPercent, 0);
+    document.getElementById('gpuTiler').textContent = formatPercent(sample.gpu.tilerPercent, 0);
+    pushHistory(telemetryHistory.gpu, sample.gpu.utilizationPercent);
+    document.getElementById('gpuSparkline').setAttribute('points', sparklinePoints(telemetryHistory.gpu, 34, 100));
+  }
+
+  lastProcesses = Array.isArray(sample.processes) ? sample.processes : [];
+  renderProcesses(lastProcesses);
 
   const systemUnavailable = !sample.cpu && !sample.memory;
   const networkUnavailable = !sample.network && (!sample.processes || sample.processes.length === 0);
@@ -1773,6 +1831,7 @@ function initializeControls() {
   document.getElementById('scanlinesToggle').addEventListener('click', toggleScanlines);
   document.getElementById('soundToggle').addEventListener('click', toggleSound);
   document.getElementById('systemGroupToggle').addEventListener('click', toggleSystemGroup);
+  initializeProcessSort();
   recordSystemVisibilityState(!document.body.classList.contains('system-group-hidden'));
   updateClock();
   const clockTimer = setInterval(updateClock, 1_000);
