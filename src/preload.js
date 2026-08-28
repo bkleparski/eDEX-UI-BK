@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('filesApi', Object.freeze({
   list: (sessionId, directoryPath = null, showHidden = false) => (
     ipcRenderer.invoke('files:list', { sessionId, directoryPath, showHidden: showHidden === true })
   ),
+  onChanged: (callback) => subscribe('files:changed', callback),
+  stopWatching: () => ipcRenderer.send('files:unwatch'),
   preview: (filePath) => ipcRenderer.invoke('files:preview', { filePath }),
   open: (filePath) => ipcRenderer.invoke('files:open', { filePath }),
   reveal: (filePath) => ipcRenderer.invoke('files:reveal', { filePath }),

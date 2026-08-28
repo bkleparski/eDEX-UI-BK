@@ -19,8 +19,9 @@
   runFileContextAction, runFileOperation, scheduleImagePreview, selectableEntries,
   setFileOperationStatus, setFileSelection, showFileContextMenu, showHiddenFiles,
   showImagePreviewImage, showImagePreviewMessage, sortFileEntries, startFileBrowserPolling,
-  stopFileBrowserPolling, toggleDotfiles, toggleFileFilter, transferSelection, trashSelection,
-  updateDotfilesState, updateFileBrowserMode, updateFileStatusBar, updateSortIndicators
+  stopFileBrowserPolling, stopFileBrowserWatching, toggleDotfiles, toggleFileFilter,
+  transferSelection, trashSelection, updateDotfilesState, updateFileBrowserMode,
+  updateFileStatusBar, updateSortIndicators
 */
 
 const imagePreviewExtensions = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
@@ -30,6 +31,15 @@ const imagePreviewCacheTtlMs = 60_000;
 const imagePreviewCacheMaxChars = 48 * 1024 * 1024;
 let fileRefreshTimer = null;
 let fileRefreshInFlight = false;
+// Set from the `watching` flag on each files:list response — main.js keeps
+// an fs.watch on the resolved directory when it can, and pushes
+// files:changed on activity. True means polling is just a slow safety net
+// (fs.watch on macOS doesn't always report metadata-only changes); false
+// means fs.watch isn't covering this directory and polling is the only
+// signal, so it runs fast instead.
+let fileWatchingActive = false;
+const FILE_POLL_INTERVAL_WATCHING_MS = 10_000;
+const FILE_POLL_INTERVAL_FALLBACK_MS = 1_500;
 let fileBrowserMode = 'live';
 let browsedDirectory = null;
 let showHiddenFiles = false;
@@ -603,13 +613,34 @@ function runFileContextAction(action) {
 }
 
 function stopFileBrowserPolling() {
-  if (fileRefreshTimer !== null) clearInterval(fileRefreshTimer);
+  if (fileRefreshTimer !== null) clearTimeout(fileRefreshTimer);
   fileRefreshTimer = null;
+}
+
+// A recursive setTimeout (rather than setInterval) so the cadence can adapt
+// on the fly: fast (fallback) while fs.watch isn't covering the current
+// directory, slow (safety net) once it is — each tick just re-reads
+// fileWatchingActive, no need to tear down/recreate a timer to switch.
+function scheduleNextFileBrowserPoll() {
+  const intervalMs = fileWatchingActive ? FILE_POLL_INTERVAL_WATCHING_MS : FILE_POLL_INTERVAL_FALLBACK_MS;
+  fileRefreshTimer = setTimeout(async () => {
+    await refreshFileBrowser();
+    scheduleNextFileBrowserPoll();
+  }, intervalMs);
 }
 
 function startFileBrowserPolling() {
   stopFileBrowserPolling();
-  fileRefreshTimer = setInterval(refreshFileBrowser, 1_500);
+  scheduleNextFileBrowserPoll();
+}
+
+// Tears down the main-process fs.watch for this window. Called wherever the
+// FILES panel actually closes (filesystem-ui.js) and on unload — window
+// close is also covered independently, main-side, by main.js's own
+// webContents 'destroyed' cleanup, so nothing is left watching either way.
+function stopFileBrowserWatching() {
+  fileWatchingActive = false;
+  window.filesApi.stopWatching();
 }
 
 function resumeLiveFileBrowser({ refresh = true } = {}) {
@@ -729,11 +760,13 @@ async function refreshFileBrowser(directoryPath = null) {
   fileRefreshInFlight = true;
   try {
     const result = await window.filesApi.list(requestedSessionId, requestedDirectory, showHiddenFiles);
+    fileWatchingActive = result?.watching === true;
     if (requestId !== fileBrowserRequestId || requestedSessionId !== activeSessionId
       || requestedMode !== fileBrowserMode) return;
     if (requestedMode === 'browsing' && result?.status === 'ok') browsedDirectory = result.cwd;
     renderFileBrowser(result);
   } catch {
+    fileWatchingActive = false;
     if (requestId === fileBrowserRequestId && requestedSessionId === activeSessionId) renderFileBrowser(null);
   } finally {
     if (requestId === fileBrowserRequestId) fileRefreshInFlight = false;
@@ -897,12 +930,21 @@ function initializeFileBrowser() {
   window.addEventListener('resize', positionImagePreview);
   window.addEventListener('blur', () => hideImagePreview('blur'));
 
+  // Pushed by main.js's fs.watch on the resolved directory (debounced there)
+  // — just triggers an immediate refresh; refreshFileBrowser's own guards
+  // (hidden panel, in-flight, busy) decide whether that actually does
+  // anything.
+  window.filesApi.onChanged(() => refreshFileBrowser());
+
   updateFileBrowserMode('live');
   updateDotfilesState();
   updateSortIndicators();
   updateFileStatusBar();
   startFileBrowserPolling();
-  window.addEventListener('beforeunload', stopFileBrowserPolling, { once: true });
+  window.addEventListener('beforeunload', () => {
+    stopFileBrowserPolling();
+    stopFileBrowserWatching();
+  }, { once: true });
 }
 
 function toggleFileFilter() {

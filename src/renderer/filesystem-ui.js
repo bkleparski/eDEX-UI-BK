@@ -68,6 +68,8 @@
     elements.filesGroupState.textContent = 'OFF';
     document.body.dataset.filesPanelOpen = 'false';
     document.body.dataset.filesToggleCount = String((Number(document.body.dataset.filesToggleCount) || 0) + 1);
+    // No point holding an fs.watch open on a directory nobody's looking at.
+    stopFileBrowserWatching();
     window.dispatchEvent(new Event('resize'));
   }
 

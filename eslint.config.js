@@ -227,6 +227,7 @@ const rendererSharedGlobals = {
   splitPaneContainer: 'readonly',
   startFileBrowserPolling: 'readonly',
   stopFileBrowserPolling: 'readonly',
+  stopFileBrowserWatching: 'readonly',
   storageKeys: 'readonly',
   switchTerminalSession: 'readonly',
   switchTerminalTab: 'readonly',
@@ -395,7 +396,8 @@ module.exports = [
           'runFileContextAction', 'runFileOperation', 'scheduleImagePreview', 'selectableEntries',
           'setFileOperationStatus', 'setFileSelection', 'showFileContextMenu', 'showHiddenFiles',
           'showImagePreviewImage', 'showImagePreviewMessage', 'sortFileEntries',
-          'startFileBrowserPolling', 'stopFileBrowserPolling', 'toggleDotfiles', 'toggleFileFilter',
+          'startFileBrowserPolling', 'stopFileBrowserPolling', 'stopFileBrowserWatching',
+          'toggleDotfiles', 'toggleFileFilter',
           'transferSelection', 'trashSelection', 'updateDotfilesState', 'updateFileBrowserMode',
           'updateFileStatusBar', 'updateSortIndicators'
         )

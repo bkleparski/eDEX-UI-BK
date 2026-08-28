@@ -39,6 +39,9 @@ const terminals = new Map();
 const terminalMetadataSessions = new Map();
 const monitoringSessions = new Map();
 const assistantRequests = new Map();
+const fileWatchers = new Map();
+const fileWatcherCleanupRegistered = new WeakSet();
+const FILE_WATCH_DEBOUNCE_MS = 200;
 let configStore;
 let providerRegistry;
 let assistantService;
@@ -660,7 +663,7 @@ function runCommand(command, args, timeout = 8_000) {
 // Per-process GPU use needs root on macOS, but the accelerator's own counters
 // are world-readable — so the HUD reports GPU load for the device, not per app.
 async function collectGpuMetric() {
-  const stdout = await runCommand('ioreg', ['-r', '-d', '1', '-c', 'IOAccelerator', '-w', '0'], 2_000);
+  const stdout = await runCommand('/usr/sbin/ioreg', ['-r', '-d', '1', '-c', 'IOAccelerator', '-w', '0'], 2_000);
   const statistics = stdout.match(/"PerformanceStatistics"\s*=\s*\{([^}]*)\}/);
   if (!statistics) throw new Error('No accelerator statistics');
   const readPercent = (label) => {
@@ -679,7 +682,7 @@ async function collectGpuMetric() {
 // `top` reports energy impact only from its second sample on, so this costs a
 // second of wall time and runs on its own slow cadence, off the telemetry tick.
 async function collectProcessEnergy() {
-  const stdout = await runCommand('top', [
+  const stdout = await runCommand('/usr/bin/top', [
     '-l', '2', '-s', '1', '-n', String(PROCESS_ENERGY_LIMIT),
     '-o', 'power', '-stats', 'pid,power'
   ]);
@@ -1004,24 +1007,91 @@ function registerTerminalIpc() {
   });
 }
 
+function disposeFileWatcher(webContentsId) {
+  const state = fileWatchers.get(webContentsId);
+  if (!state) return;
+  clearTimeout(state.debounceTimer);
+  try {
+    state.watcher?.close();
+  } catch {
+    // Watcher may already be in a broken/closed state — nothing more to clean up.
+  }
+  fileWatchers.delete(webContentsId);
+}
+
+// fs.watch (FSEvents on macOS) fires several events for a single file
+// operation — this collapses a burst into one push, ~200ms after it settles.
+function scheduleFileChangeNotification(webContentsId) {
+  const state = fileWatchers.get(webContentsId);
+  if (!state) return;
+  clearTimeout(state.debounceTimer);
+  state.debounceTimer = setTimeout(() => {
+    if (!state.sender.isDestroyed()) state.sender.send('files:changed', { cwd: state.watchedPath });
+  }, FILE_WATCH_DEBOUNCE_MS);
+}
+
+// Keeps at most one fs.watch per window, pointed at whatever directory
+// files:list just resolved — swaps it (close old, open new) whenever that
+// directory changes. Returns whether a live watcher now covers
+// `directoryPath`; the renderer falls back to fast polling when it doesn't
+// (EMFILE/ENOSPC, network shares, or a watcher that later reports an error —
+// directory removed, permissions changed, etc).
+function ensureFileWatcher(event, directoryPath) {
+  const webContentsId = event.sender.id;
+  const existing = fileWatchers.get(webContentsId);
+  if (existing && existing.watchedPath === directoryPath && existing.watcher) return true;
+
+  disposeFileWatcher(webContentsId);
+  if (!fileWatcherCleanupRegistered.has(event.sender)) {
+    fileWatcherCleanupRegistered.add(event.sender);
+    event.sender.once('destroyed', () => disposeFileWatcher(webContentsId));
+  }
+
+  const state = { watchedPath: directoryPath, watcher: null, debounceTimer: null, sender: event.sender };
+  try {
+    state.watcher = fs.watch(directoryPath, { persistent: false }, () => {
+      scheduleFileChangeNotification(webContentsId);
+    });
+    state.watcher.on('error', () => disposeFileWatcher(webContentsId));
+    fileWatchers.set(webContentsId, state);
+    return true;
+  } catch {
+    // EMFILE, ENOSPC, or a path fs.watch can't cover (some network mounts).
+    return false;
+  }
+}
+
 function registerFilesIpc() {
   ipcMain.handle('files:list', async (event, payload = {}) => {
     requireTrustedSender(event);
     const sessionId = validSessionId(payload.sessionId);
     const showHidden = payload.showHidden === true;
     if (!sessionId) throw new Error('Invalid terminal session ID.');
+    let result;
     if (payload.directoryPath !== null && payload.directoryPath !== undefined) {
       const directoryPath = validDirectoryPath(payload.directoryPath);
       if (!directoryPath) {
         return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
       }
-      return listDirectoryFiles(directoryPath, sessionId, showHidden);
+      result = await listDirectoryFiles(directoryPath, sessionId, showHidden);
+    } else {
+      const terminal = terminals.get(event.sender.id)?.get(sessionId);
+      if (!terminal) {
+        return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
+      }
+      result = await listTerminalFiles(terminal, sessionId, showHidden);
     }
-    const terminal = terminals.get(event.sender.id)?.get(sessionId);
-    if (!terminal) {
-      return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
-    }
-    return listTerminalFiles(terminal, sessionId, showHidden);
+    // Keep the watcher pointed at whatever directory this call just
+    // resolved — swaps it when the caller has moved elsewhere, and reports
+    // back whether a live watcher is actually covering it (the renderer
+    // falls back to fast polling when it isn't).
+    result.watching = result.status === 'ok' ? ensureFileWatcher(event, result.cwd) : false;
+    return result;
+  });
+
+  ipcMain.on('files:unwatch', (event) => {
+    if (!isTrustedSender(event)) return;
+    disposeFileWatcher(event.sender.id);
   });
 
   ipcMain.handle('files:preview', async (event, payload = {}) => {
