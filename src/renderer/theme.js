@@ -1,5 +1,12 @@
 'use strict';
 
+/* exported
+  DEFAULT_THEME, FONT_SIZES, HUD_ACCENTS, NERD_FALLBACK, SCROLLBACK_SIZES, TERMINAL_COLORS,
+  TERMINAL_FONTS, THEME_STORAGE_KEY, accentById, applyHudTokens, applyTheme, currentTheme,
+  listeners, normalizeTheme, readStoredTheme, saveTheme, terminalAppearance, terminalColorById,
+  terminalFontById
+*/
+
 // Appearance layer for EBARTNET-UI.
 //
 // The whole HUD is painted from a handful of CSS custom properties declared in

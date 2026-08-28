@@ -4,7 +4,6 @@
   if (!window.assistantApi || !window.settingsApi) return;
 
   const assistantTestMode = new URLSearchParams(window.location.search).get('test') === 'assistant';
-  const PROVIDERS = ['ollama', 'lmstudio', 'openrouter', 'opencode-go'];
   const CLOUD_PROVIDERS = new Set(['openrouter', 'opencode-go']);
   const ASSISTANT_WIDTH_KEY = 'edex.assistant.width.v1';
   const ASSISTANT_DEFAULT_WIDTH = 390;

@@ -1,5 +1,28 @@
 'use strict';
 
+/* exported
+  applySelectionClasses, beginFileRename, browseDirectory, browsedDirectory, cacheImagePreview,
+  cachedImagePreview, clearFileSelection, closeFileFilter, commitFileRename,
+  copyPathsToClipboard, createFileIcon, currentDirectoryPath, fileBrowserBusy, fileBrowserMode,
+  fileBrowserRequestId, fileClipboard, fileContextPaths, fileFilterQuery, fileIconPaths,
+  fileOperationInFlight, fileRefreshInFlight, fileRefreshTimer, fileRenameTarget,
+  fileSelection, fileSelectionAnchor, fileSortAscending, fileSortKey, fileTypeMarker,
+  formatFileModified, formatFileSize, getFileBrowserMode, handleFileBrowserKeydown,
+  handleRowSelection, hideFileContextMenu, hideFileRename, hideImagePreview, imagePreviewCache,
+  imagePreviewCacheChars, imagePreviewCacheLimit, imagePreviewCacheMaxChars,
+  imagePreviewCacheTtlMs, imagePreviewCursorX, imagePreviewCursorY, imagePreviewDwellMs,
+  imagePreviewExtensions, imagePreviewHoverStartedAt, imagePreviewPath,
+  imagePreviewRequestToken, imagePreviewTimer, initializeFileBrowser, isPreviewableImage,
+  lastFileBrowserResult, matchesFileFilter, openFileEntry, openFileFilter,
+  positionImagePreview, presentImagePreview, reconcileImagePreviewRow, refreshFileBrowser,
+  renderCurrentFileBrowserResult, renderFileBrowser, resumeLiveFileBrowser,
+  runFileContextAction, runFileOperation, scheduleImagePreview, selectableEntries,
+  setFileOperationStatus, setFileSelection, showFileContextMenu, showHiddenFiles,
+  showImagePreviewImage, showImagePreviewMessage, sortFileEntries, startFileBrowserPolling,
+  stopFileBrowserPolling, toggleDotfiles, toggleFileFilter, transferSelection, trashSelection,
+  updateDotfilesState, updateFileBrowserMode, updateFileStatusBar, updateSortIndicators
+*/
+
 const imagePreviewExtensions = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
 const imagePreviewDwellMs = 200;
 const imagePreviewCacheLimit = 24;
@@ -801,7 +824,7 @@ function initializeFileBrowser() {
     document.body.dataset.fileBrowserDragStarted = 'true';
   });
 
-  list.addEventListener('dragend', (event) => {
+  list.addEventListener('dragend', (_event) => {
     for (const item of document.querySelectorAll('#fileList .file-row.is-dragging')) {
       item.classList.remove('is-dragging');
     }

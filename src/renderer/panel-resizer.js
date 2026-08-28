@@ -1,5 +1,7 @@
 'use strict';
 
+/* exported createPanelResizer */
+
 // Shared width-drag controller for the side panels (ASSISTANT and FILES).
 // Both panels resize identically — same bounds math, pointer capture,
 // keyboard nudge and localStorage persistence — so the behavior lives here

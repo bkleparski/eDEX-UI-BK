@@ -1,5 +1,13 @@
 'use strict';
 
+/* exported
+  PROCESS_LIST_LIMIT, formatCapacity, formatPercent, formatProcessValue, formatRate,
+  formatUptime, initializeMonitoring, initializeProcessSort, lastProcesses, numeric,
+  processSortKey, pushHistory, renderCoreLoads, renderMonitoring, renderProcesses, setMeter,
+  setProcessSortKey, setStackedMeter, setWarningState, sortProcesses, sparklinePoints,
+  telemetryHistory, updateClock
+*/
+
 const telemetryHistory = {
   cpu: [],
   networkDown: [],

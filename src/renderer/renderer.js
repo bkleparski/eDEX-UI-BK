@@ -1,5 +1,24 @@
 'use strict';
 
+/* exported
+  activeSessionId, activeTabId, applyTerminalAppearance, audioContext, bootActive, bootTimer,
+  clearFileDropTarget, createTerminalSession, createTerminalTab, dropTestMarker, dropTestMime,
+  dropTestOutput, droppedFilePaths, ensureAudioContext, fileDragDepth, finishBoot,
+  fitActiveTerminal, fitSession, focusTerminal, handleBootClick, handleBootInput,
+  handleCommandCompleted, handleTerminalExit, hasFileDrag, initializeAudio, initializeBoot,
+  initializeControls, initializeFileDrop, initializeTerminal, insertDroppedPaths,
+  internalFilePathMime, isSmokeTest, isTypingInForeignInput, isVisualTest, loadWebglAddon,
+  maxTerminalSessions, nextSessionNumber, nextTabNumber, paneResizeObserver,
+  panelDropTestMarker, playCommandCompleteSound, playInputSound, quoteShellPath, readSetting,
+  recordSystemVisibilityState, removeBootListeners, removeTerminalTab, rendererShuttingDown,
+  setFileDropTarget, setSystemGroupVisible, smokeCompleted, smokeMarker, smokeOutput,
+  soundEnabled, storageKeys, switchTerminalSession, switchTerminalTab, tabSessions,
+  terminalFitFrame, terminalFocusRequested, terminalSessions, terminalTabs, terminalTheme,
+  testMode, themedTerminalPalette, toggleScanlines, toggleSound, toggleSystemGroup,
+  updateScanlines, updateShellStatus, updateSound, updateTerminalMetadata, visibleSessions,
+  writeSetting
+*/
+
 const storageKeys = Object.freeze({
   skipBoot: 'edex-ui-bk.skipBoot',
   scanlines: 'edex-ui-bk.scanlines',

@@ -3,7 +3,7 @@
 const { PROVIDER_IDS } = require('./contracts');
 const { OpenAICompatibleClient } = require('./openai-compatible-client');
 
-const EMBEDDING_MODEL_PATTERN = /(?:^|[\/_-])(?:embed|embedding)(?:$|[\/_-])/i;
+const EMBEDDING_MODEL_PATTERN = /(?:^|[/_-])(?:embed|embedding)(?:$|[/_-])/i;
 
 class LMStudioProvider {
   constructor({ baseUrl = 'http://127.0.0.1:1234/v1', fetchImpl = globalThis.fetch, timeoutMs = 180_000 } = {}) {

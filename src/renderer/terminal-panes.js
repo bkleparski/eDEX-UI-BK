@@ -1,5 +1,20 @@
 'use strict';
 
+/* exported
+  PASTE_PREVIEW_LINES, beginSplitterDrag, beginTTYRename, closeActivePane, closeTTYSession,
+  closeTerminalSearch, commitTTYRename, confirmPasteWarning, createPaneChip, createSplitter,
+  enterPaneZoom, exitPaneZoom, focusPaneInDirection, getTerminalSearchSessionId,
+  getTtyContextSessionId, getTtyRenameSessionId, getZoomedSessionId,
+  handleTerminalPasteCapture, hidePasteWarning, hideTTYContextMenu, hideTTYRename,
+  initializePasteWarning, initializeTTYContextMenu, initializeTerminalSearch,
+  openTerminalSearch, paneLabel, paneZoomPath, pasteWarningSessionId, pasteWarningText,
+  positionTTYOverlay, positionTerminalSearchBar, removePaneContainer, renderPaneChips,
+  renderTabLabel, renderTerminalTabLabel, resetTTYName, runTerminalSearch, showPasteWarning,
+  showTTYContextMenu, splitActivePane, splitPaneContainer, terminalSearchDecorations,
+  terminalSearchOptions, terminalSearchSessionId, toggleActivePaneZoom, ttyContextSessionId,
+  ttyRenameSessionId, updateTerminalSearchCount, zoomedSessionId
+*/
+
 let terminalSearchSessionId = null;
 let zoomedSessionId = null;
 let ttyContextSessionId = null;
