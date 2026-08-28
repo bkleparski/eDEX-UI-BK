@@ -17,7 +17,7 @@ services:
     ports:
       - "127.0.0.1:3040:3040"
     environment:
-      EDEX_WEB_TOKEN: "change-me-to-a-real-secret"
+      EDEX_WEB_TOKEN: "${EDEX_WEB_TOKEN:-change-me-to-a-real-secret}"
       # EDEX_WEB_BIND and EDEX_WEB_DATA already default correctly inside the
       # image (see Dockerfile) — spelled out here only as documentation of
       # what's tunable. EDEX_WEB_SHELL: "/bin/bash" would force a shell
