@@ -473,7 +473,19 @@ module.exports = [
     rules: rendererRules
   },
   {
-    files: ['src/main.js', 'src/preload.js', 'src/main/**/*.js', 'scripts/**/*.js', 'test/**/*.js', 'eslint.config.js'],
+    // Injected by src/server/index.js only (see transformIndexHtml) — never
+    // loaded by Electron. Self-contained IIFE, so it only needs the plain
+    // browser environment, none of the other renderer scripts' shared globals.
+    files: ['src/renderer/web-preload.js'],
+    languageOptions: {
+      sourceType: 'script',
+      ecmaVersion: 'latest',
+      globals: rendererEnvGlobals
+    },
+    rules: rendererRules
+  },
+  {
+    files: ['src/main.js', 'src/preload.js', 'src/main/**/*.js', 'src/server/**/*.js', 'scripts/**/*.js', 'test/**/*.js', 'eslint.config.js'],
     languageOptions: {
       sourceType: 'commonjs',
       ecmaVersion: 'latest',
