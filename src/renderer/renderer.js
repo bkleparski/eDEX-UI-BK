@@ -9,7 +9,7 @@
   initializeControls, initializeFileDrop, initializeTerminal, insertDroppedPaths,
   internalFilePathMime, isSmokeTest, isTypingInForeignInput, isVisualTest, loadWebglAddon,
   maxTerminalSessions, nextSessionNumber, nextTabNumber, paneResizeObserver,
-  panelDropTestMarker, playCommandCompleteSound, playInputSound, quoteShellPath, readSetting,
+  panelDropTestMarker, playCommandCompleteSound, playInputSound, readSetting,
   recordSystemVisibilityState, removeBootListeners, removeTerminalTab, rendererShuttingDown,
   setFileDropTarget, setSystemGroupVisible, smokeCompleted, smokeMarker, smokeOutput,
   soundEnabled, storageKeys, switchTerminalSession, switchTerminalTab, tabSessions,
@@ -283,10 +283,6 @@ function hasFileDrag(dataTransfer) {
   return types.includes('Files') || types.includes(internalFilePathMime)
     || (document.body.classList.contains('file-browser-dragging') && types.includes('text/plain'))
     || (isVisualTest && types.includes(dropTestMime));
-}
-
-function quoteShellPath(filePath) {
-  return `'${filePath.replace(/'/g, `'\\''`)}'`;
 }
 
 function droppedFilePaths(dataTransfer) {

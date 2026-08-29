@@ -76,6 +76,18 @@ function applyPlatformShortcutGlyphs(root = document) {
     });
 }
 
+// Wraps a dropped/dragged path for insertion at the shell prompt (see
+// renderer.js's insertDroppedPaths). POSIX shells (zsh/bash/sh) close and
+// reopen the single-quoted string around a literal `'` — PowerShell has no
+// such escape and instead doubles the embedded quote, so win32 gets its own
+// branch rather than producing a string cmd.exe/pwsh would choke on.
+function quoteShellPath(filePath) {
+  if (platformName() === 'win32') {
+    return `'${filePath.replace(/'/g, "''")}'`;
+  }
+  return `'${filePath.replace(/'/g, `'\\''`)}'`;
+}
+
 // Pure, DOM-free functions only — see test/renderer/platform-utils.test.js.
 // applyPlatformShortcutGlyphs needs a real `document` and isn't exported here.
 if (typeof module !== 'undefined' && module.exports) {
@@ -85,6 +97,7 @@ if (typeof module !== 'undefined' && module.exports) {
     primaryModifier,
     secondaryPlatformModifier,
     modifierComboText,
-    superKeyGlyph
+    superKeyGlyph,
+    quoteShellPath
   };
 }

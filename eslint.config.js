@@ -324,7 +324,7 @@ module.exports = [
       ecmaVersion: 'latest',
       globals: {
         ...rendererEnvGlobals,
-        ...withoutOwn('applyPlatformShortcutGlyphs', 'primaryModifier', 'secondaryPlatformModifier')
+        ...withoutOwn('applyPlatformShortcutGlyphs', 'primaryModifier', 'quoteShellPath', 'secondaryPlatformModifier')
       }
     },
     rules: rendererRules
@@ -458,7 +458,7 @@ module.exports = [
           'initializeFileDrop', 'initializeTerminal', 'insertDroppedPaths', 'internalFilePathMime',
           'isSmokeTest', 'isTypingInForeignInput', 'isVisualTest', 'loadWebglAddon',
           'maxTerminalSessions', 'nextSessionNumber', 'nextTabNumber', 'paneResizeObserver',
-          'panelDropTestMarker', 'playCommandCompleteSound', 'playInputSound', 'quoteShellPath',
+          'panelDropTestMarker', 'playCommandCompleteSound', 'playInputSound',
           'readSetting', 'recordSystemVisibilityState', 'removeBootListeners', 'removeTerminalTab',
           'rendererShuttingDown', 'setFileDropTarget', 'setSystemGroupVisible', 'smokeCompleted',
           'smokeMarker', 'smokeOutput', 'soundEnabled', 'storageKeys', 'switchTerminalSession',

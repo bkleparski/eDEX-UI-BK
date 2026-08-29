@@ -11,19 +11,53 @@ const path = require('node:path');
 const { safeLabel } = require('./format-utils');
 
 const SLOW_COMMAND_THRESHOLD_MS = 15_000;
-const IS_LINUX = process.platform === 'linux';
+
+// A bare directory scan of PATH, no child process — used to find pwsh.exe
+// (PowerShell 7 doesn't install to a fixed path; it's wherever winget/MSI
+// put it, but always on PATH once installed).
+function findExecutableInPath(exeName) {
+  const pathEnv = process.env.PATH || process.env.Path || process.env.path || '';
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, exeName);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+// PowerShell 7 (pwsh.exe) first if it's installed — it's the modern,
+// actively-developed shell Microsoft ships going forward — then the
+// Windows PowerShell that's on every Windows install at a fixed path, then
+// cmd.exe as the one thing guaranteed to exist.
+function defaultShellWin32() {
+  const pwsh = findExecutableInPath('pwsh.exe');
+  if (pwsh) return pwsh;
+  const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+  const windowsPowerShell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if (fs.existsSync(windowsPowerShell)) return windowsPowerShell;
+  return path.join(systemRoot, 'System32', 'cmd.exe');
+}
 
 // The Electron main process spawns this directly on Electron 43 (that's
 // been the shell on every Mac since Catalina, so darwin never needs to look
 // further); the web server (src/server/index.js) uses this same function
 // because its Docker image (node:22-slim) doesn't ship zsh at all — without
 // a fallback, node-pty's spawn would just fail outright with ENOENT. Linux
-// desktop builds hit exactly the same gap.
-function defaultShell() {
+// desktop builds hit exactly the same gap. `platform` is an override for
+// unit tests only — production callers always take the process.platform default.
+function defaultShell(platform = process.platform) {
+  if (platform === 'win32') return defaultShellWin32();
   for (const candidate of ['/bin/zsh', '/bin/bash', '/bin/sh']) {
     if (fs.existsSync(candidate)) return candidate;
   }
   return '/bin/sh';
+}
+
+// `-l` (login shell) is a POSIX shell flag. pwsh.exe/powershell.exe treat an
+// unrecognized leading argument as a script path and fail to start; cmd.exe
+// would try to run it as a command. So Windows gets no extra args at all.
+function shellSpawnArgs(platform = process.platform) {
+  return platform === 'win32' ? [] : ['-l'];
 }
 
 function terminalWorkingDirectoryViaLsof(terminal) {
@@ -55,11 +89,18 @@ async function terminalWorkingDirectoryViaProcfs(terminal) {
   return fs.promises.readlink(`/proc/${terminal.pid}/cwd`);
 }
 
-async function terminalWorkingDirectory(terminal) {
+async function terminalWorkingDirectory(terminal, platform = process.platform) {
   if (!terminal || !Number.isInteger(terminal.pid)) {
     throw new Error('Terminal process unavailable');
   }
-  if (IS_LINUX) {
+  if (platform === 'win32') {
+    // ConPTY exposes no cwd today — no /proc, and no lsof equivalent. Degrade
+    // to null rather than shelling out to something that doesn't exist;
+    // collectTerminalMetadata below falls back to the process name for the
+    // panel label. An OSC 7 cwd-reporting spike is tracked separately (W2).
+    return null;
+  }
+  if (platform === 'linux') {
     try {
       return await terminalWorkingDirectoryViaProcfs(terminal);
     } catch {
@@ -73,8 +114,12 @@ async function terminalWorkingDirectory(terminal) {
 function processIdentity(processTitle) {
   const command = safeLabel(processTitle, 'zsh', 180);
   const executable = command.trim().split(/\s+/)[0];
-  const name = path.basename(executable).replace(/^-/, '').toLowerCase() || 'zsh';
-  return { command, name, idle: /^(?:zsh|bash|sh|login)$/.test(name) };
+  // Windows process titles carry the .exe suffix (and in whatever case the
+  // OS feels like reporting it) — already lowercased above, so a plain
+  // suffix strip covers PowerShell.EXE, POWERSHELL.EXE, etc. alike.
+  const baseName = path.basename(executable).replace(/^-/, '').toLowerCase();
+  const name = baseName.replace(/\.exe$/, '') || 'zsh';
+  return { command, name, idle: /^(?:zsh|bash|sh|login|pwsh|powershell|cmd)$/.test(name) };
 }
 
 function compactWorkingDirectory(cwd) {
@@ -121,7 +166,12 @@ async function collectTerminalMetadata(terminal, state, now) {
     command: processInfo.command,
     idle: processInfo.idle,
     cwd: state.cwd || null,
-    label: processInfo.idle ? compactWorkingDirectory(state.cwd) : processInfo.name,
+    // Idle with a known cwd shows the compacted path; idle with no cwd
+    // (win32 today — see terminalWorkingDirectory above) falls back to the
+    // process name, same as the non-idle case, instead of a misleading '~'.
+    label: processInfo.idle && typeof state.cwd === 'string' && state.cwd
+      ? compactWorkingDirectory(state.cwd)
+      : processInfo.name,
     completedCommand
   };
 }
@@ -129,6 +179,7 @@ async function collectTerminalMetadata(terminal, state, now) {
 module.exports = {
   SLOW_COMMAND_THRESHOLD_MS,
   defaultShell,
+  shellSpawnArgs,
   terminalWorkingDirectory,
   processIdentity,
   compactWorkingDirectory,

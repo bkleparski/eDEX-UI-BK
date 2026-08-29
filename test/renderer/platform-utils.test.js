@@ -3,7 +3,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
-  isDarwinPlatform, primaryModifier, secondaryPlatformModifier, modifierComboText, superKeyGlyph
+  isDarwinPlatform, primaryModifier, secondaryPlatformModifier, modifierComboText, superKeyGlyph,
+  quoteShellPath
 } = require('../../src/renderer/platform-utils.js');
 
 function withPlatform(platform, fn) {
@@ -71,4 +72,21 @@ test('superKeyGlyph distinguishes darwin, win32 and the Linux default', () => {
   withPlatform('win32', () => assert.equal(superKeyGlyph(), 'Win'));
   withPlatform('linux', () => assert.equal(superKeyGlyph(), 'Super'));
   withPlatform('other', () => assert.equal(superKeyGlyph(), 'Super'));
+});
+
+test('quoteShellPath uses POSIX close-and-reopen quoting off win32', () => {
+  withPlatform('darwin', () => {
+    assert.equal(quoteShellPath('/Users/bartek/plik.txt'), `'/Users/bartek/plik.txt'`);
+    assert.equal(quoteShellPath("/tmp/it's a file.txt"), `'/tmp/it'\\''s a file.txt'`);
+  });
+  withPlatform('linux', () => {
+    assert.equal(quoteShellPath("/home/b/it's.txt"), `'/home/b/it'\\''s.txt'`);
+  });
+});
+
+test('quoteShellPath doubles embedded single quotes on win32 (PowerShell quoting)', () => {
+  withPlatform('win32', () => {
+    assert.equal(quoteShellPath('C:\\Users\\bartek\\plik.txt'), `'C:\\Users\\bartek\\plik.txt'`);
+    assert.equal(quoteShellPath("C:\\Users\\bartek\\it's a file.txt"), `'C:\\Users\\bartek\\it''s a file.txt'`);
+  });
 });

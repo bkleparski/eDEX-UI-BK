@@ -19,7 +19,7 @@ const {
 } = require('./main/files-operations');
 const { safeLabel } = require('./main/format-utils');
 const { MONITOR_INTERVAL_MS, createMonitoringSession, collectMonitoringSample } = require('./main/monitoring');
-const { collectTerminalMetadata, defaultShell } = require('./main/terminal-metadata');
+const { collectTerminalMetadata, defaultShell, shellSpawnArgs } = require('./main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('./main/themes');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
@@ -253,7 +253,7 @@ function registerTerminalIpc() {
     const assistantBinPath = app.isPackaged
       ? path.join(process.resourcesPath, 'bin')
       : path.join(__dirname, '..', 'resources', 'bin');
-    const terminal = pty.spawn(shell, ['-l'], {
+    const terminal = pty.spawn(shell, shellSpawnArgs(), {
       name: 'xterm-256color',
       cols,
       rows,
