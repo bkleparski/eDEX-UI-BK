@@ -29,7 +29,7 @@ const {
   createImagePreviewCache, defaultImagePreviewEncode, previewImageFile, listDirectoryFiles, listTerminalFiles
 } = require('../main/files-operations');
 const { createMonitoringSession, collectMonitoringSample, MONITOR_INTERVAL_MS } = require('../main/monitoring');
-const { collectTerminalMetadata, defaultShell, shellSpawnArgs, reportTerminalCwd } = require('../main/terminal-metadata');
+const { collectTerminalMetadata, defaultShell, shellDisplayName, shellSpawnArgs, reportTerminalCwd } = require('../main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('../main/themes');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
@@ -477,7 +477,7 @@ async function handleTerminalStart(state, args) {
   });
 
   state.terminals.set(id, terminal);
-  state.metadataStates.set(id, { cwd: null, cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null });
+  state.metadataStates.set(id, { cwd: null, cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null, shellPath: SHELL });
 
   terminal.onData((data) => pushEvent(state.ws, 'terminal:data', { sessionId: id, data }));
   terminal.onExit(({ exitCode, signal }) => {
@@ -485,7 +485,7 @@ async function handleTerminalStart(state, args) {
     pushEvent(state.ws, 'terminal:exit', { sessionId: id, exitCode, signal });
   });
 
-  return { started: true, sessionId: id, pid: terminal.pid, shell: SHELL };
+  return { started: true, sessionId: id, pid: terminal.pid, shell: SHELL, shellName: shellDisplayName(SHELL) };
 }
 
 // api:method -> handler(state, args). Handlers that don't need a reply

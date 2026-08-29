@@ -992,8 +992,12 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
   switchTerminalSession(sessionId);
 
   try {
-    await window.terminalApi.start(sessionId, { cols: terminal.cols, rows: terminal.rows });
+    const startResult = await window.terminalApi.start(sessionId, { cols: terminal.cols, rows: terminal.rows });
     session.online = true;
+    if (startResult?.shellName) {
+      const shellLabel = document.getElementById('terminalShellLabel');
+      if (shellLabel) shellLabel.textContent = `INTERACTIVE ${startResult.shellName}`;
+    }
     window.terminalApi.setActive(sessionId);
     updateShellStatus();
     focusTerminal();

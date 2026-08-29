@@ -21,7 +21,7 @@ const {
 const { safeLabel } = require('./main/format-utils');
 const { MONITOR_INTERVAL_MS, createMonitoringSession, collectMonitoringSample } = require('./main/monitoring');
 const {
-  collectTerminalMetadata, defaultShell, shellSpawnArgs, win32ShellArgs, reportTerminalCwd
+  collectTerminalMetadata, defaultShell, shellDisplayName, shellSpawnArgs, win32ShellArgs, reportTerminalCwd
 } = require('./main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('./main/themes');
 
@@ -282,7 +282,7 @@ function registerTerminalIpc() {
 
     clientTerminals.set(sessionId, terminal);
     ensureTerminalMetadataSession(event.sender, sessionId).states.set(sessionId, {
-      cwd: os.homedir(), cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null
+      cwd: os.homedir(), cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null, shellPath: shell
     });
 
     terminal.onData((data) => {
@@ -304,7 +304,7 @@ function registerTerminalIpc() {
       }
     });
 
-    return { started: true, sessionId, pid: terminal.pid, shell };
+    return { started: true, sessionId, pid: terminal.pid, shell, shellName: shellDisplayName(shell) };
   });
 
   ipcMain.on('terminal:write', (event, payload) => {

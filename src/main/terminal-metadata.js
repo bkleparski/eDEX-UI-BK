@@ -61,6 +61,13 @@ function shellSpawnArgs(platform = process.platform) {
   return platform === 'win32' ? [] : ['-l'];
 }
 
+// For the "INTERACTIVE <SHELL>" heading (see main.js's terminal:start
+// response) — a plain uppercased basename, .exe stripped case-insensitively.
+function shellDisplayName(shellPath) {
+  const base = path.basename(String(shellPath || '')).replace(/\.exe$/i, '');
+  return base ? base.toUpperCase() : 'SHELL';
+}
+
 function isPowerShellExecutable(shellPath) {
   const base = path.basename(String(shellPath || '')).toLowerCase();
   return base === 'pwsh.exe' || base === 'powershell.exe';
@@ -138,7 +145,21 @@ async function terminalWorkingDirectory(terminal, platform = process.platform) {
   return terminalWorkingDirectoryViaLsof(terminal);
 }
 
-function processIdentity(processTitle) {
+function processIdentity(processTitle, { platform = process.platform, shellPath = null } = {}) {
+  if (platform === 'win32') {
+    // node-pty's Windows backend has no live process introspection: its
+    // `.process` getter just echoes back the `name` pty-spawn option —
+    // 'xterm-256color', the terminfo name passed at spawn time, see
+    // main.js — regardless of what's actually running. `processTitle` is
+    // useless here, so fall back to the shell resolved at spawn time and
+    // treat the session as always idle: there's no busy/idle signal on
+    // Windows either way, so the only cost is losing slow-command
+    // notifications there, not cwd tracking (OSC 7 reports that
+    // independently of this idle gate).
+    const base = path.basename(String(shellPath || '')).replace(/\.exe$/i, '').toLowerCase();
+    const name = base || 'shell';
+    return { command: name, name, idle: true };
+  }
   const command = safeLabel(processTitle, 'zsh', 180);
   const executable = command.trim().split(/\s+/)[0];
   // Windows process titles carry the .exe suffix (and in whatever case the
@@ -204,8 +225,8 @@ function reportTerminalCwd(state, value, now = Date.now()) {
   return true;
 }
 
-async function collectTerminalMetadata(terminal, state, now) {
-  const processInfo = processIdentity(terminal.process);
+async function collectTerminalMetadata(terminal, state, now, platform = process.platform) {
+  const processInfo = processIdentity(terminal.process, { platform, shellPath: state.shellPath });
   if (processInfo.idle && state.cwdSource !== 'osc7' && (!state.cwd || now - state.cwdCheckedAt >= 1_000)) {
     state.cwdCheckedAt = now;
     try {
@@ -234,6 +255,7 @@ async function collectTerminalMetadata(terminal, state, now) {
 module.exports = {
   SLOW_COMMAND_THRESHOLD_MS,
   defaultShell,
+  shellDisplayName,
   shellSpawnArgs,
   win32ShellArgs,
   terminalWorkingDirectory,

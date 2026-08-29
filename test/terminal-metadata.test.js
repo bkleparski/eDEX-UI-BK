@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  defaultShell, shellSpawnArgs, win32ShellArgs, processIdentity, terminalWorkingDirectory,
+  defaultShell, shellDisplayName, shellSpawnArgs, win32ShellArgs, processIdentity, terminalWorkingDirectory,
   collectTerminalMetadata, sanitizeReportedCwd, reportTerminalCwd
 } = require('../src/main/terminal-metadata');
 
@@ -177,4 +177,72 @@ test('collectTerminalMetadata stops polling lsof/procfs once a session has an os
   const lookupState = { cwd: '/reported/by/osc7', cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null };
   await collectTerminalMetadata(terminal, lookupState, 12345);
   assert.equal(lookupState.cwdCheckedAt, 12345, 'lookup runs as normal without an osc7 report');
+});
+
+test('shellDisplayName uppercases the shell basename and strips .exe case-insensitively', () => {
+  assert.equal(shellDisplayName('C:/Tools/pwsh.exe'), 'PWSH');
+  assert.equal(shellDisplayName('C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'), 'POWERSHELL');
+  assert.equal(shellDisplayName('C:/Windows/System32/CMD.EXE'), 'CMD');
+  assert.equal(shellDisplayName('/bin/zsh'), 'ZSH');
+  assert.equal(shellDisplayName('/bin/bash'), 'BASH');
+  assert.equal(shellDisplayName(''), 'SHELL');
+  assert.equal(shellDisplayName(null), 'SHELL');
+});
+
+test('processIdentity on win32 ignores terminal.process entirely and derives identity from the known shell path', () => {
+  // Found on real Windows hardware: node-pty's Windows backend has no live
+  // process introspection — its `.process` getter just echoes back the
+  // `name` pty-spawn option ('xterm-256color') regardless of what's
+  // actually running. Any processTitle here must be ignored on win32.
+  const poisoned = 'xterm-256color';
+  assert.deepEqual(
+    processIdentity(poisoned, { platform: 'win32', shellPath: 'C:/Tools/pwsh.exe' }),
+    { command: 'pwsh', name: 'pwsh', idle: true }
+  );
+  assert.deepEqual(
+    processIdentity(poisoned, { platform: 'win32', shellPath: 'C:/Windows/System32/WindowsPowerShell/v1.0/POWERSHELL.EXE' }),
+    { command: 'powershell', name: 'powershell', idle: true }
+  );
+});
+
+test('processIdentity on win32 falls back to a generic name if the shell path is somehow missing', () => {
+  assert.deepEqual(
+    processIdentity('xterm-256color', { platform: 'win32', shellPath: null }),
+    { command: 'shell', name: 'shell', idle: true }
+  );
+});
+
+test('processIdentity off win32 is unaffected by the shellPath option (still reads processTitle)', () => {
+  assert.deepEqual(
+    processIdentity('vim notes.txt', { platform: 'darwin', shellPath: 'C:/Tools/pwsh.exe' }),
+    { command: 'vim notes.txt', name: 'vim', idle: false }
+  );
+});
+
+test('collectTerminalMetadata on win32 never shows the pty terminfo name ("xterm-256color") as the label', async () => {
+  // The exact regression from real hardware: idle was always false because
+  // processIdentity trusted the poisoned terminal.process value, so the
+  // label fell to processInfo.name = 'xterm-256color' even though OSC 7
+  // had already reported a perfectly good cwd.
+  const terminal = { pid: 4242, process: 'xterm-256color' };
+  const state = {
+    cwd: 'C:\\Users\\bartek\\project', cwdSource: 'osc7', cwdCheckedAt: 0,
+    commandStartedAt: null, commandName: null, shellPath: 'C:/Tools/pwsh.exe'
+  };
+  const result = await collectTerminalMetadata(terminal, state, 1000, 'win32');
+  assert.equal(result.idle, true);
+  assert.notEqual(result.label, 'xterm-256color');
+  assert.notEqual(result.processName, 'xterm-256color');
+  assert.equal(result.processName, 'pwsh');
+});
+
+test('collectTerminalMetadata on win32 falls back to the shell name, not the terminfo name, when cwd is still unknown', async () => {
+  const terminal = { pid: 4242, process: 'xterm-256color' };
+  const state = {
+    cwd: null, cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null,
+    shellPath: 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+  };
+  const result = await collectTerminalMetadata(terminal, state, 1000, 'win32');
+  assert.equal(result.label, 'powershell');
+  assert.notEqual(result.label, 'xterm-256color');
 });
