@@ -22,6 +22,26 @@
 
 ---
 
+## Download
+
+**[⬇ Latest release](https://github.com/bkleparski/eDEX-UI-BK/releases/latest)**
+
+| Platform | File |
+| --- | --- |
+| macOS (Apple Silicon) | `.dmg` or `.zip`, arm64 — open and drag to `Applications` |
+| Linux x86_64 | `.AppImage`, x86_64 — `chmod +x` and run, any distro |
+| Linux arm64 | `.AppImage`, arm64 |
+| Windows 10/11 x64 | `.exe` (portable, no installer) — also runs on Windows on ARM through its built-in x64 emulation |
+
+> **None of these are signed or notarised.** macOS: right-click the app → **Open** → confirm
+> **Open** (Gatekeeper otherwise reports an unidentified developer). Windows: SmartScreen will
+> warn when you run the `.exe` — click **More info** → **Run anyway**. Linux needs nothing extra
+> beyond the `chmod +x`.
+
+> **Keep a single copy (macOS).** Two builds of this app in different folders share one bundle
+> identifier, and macOS may then open whichever it finds first — which looks exactly like
+> your changes not taking effect.
+
 ## Why this exists
 
 Most "futuristic terminal" projects are either a pretty shell prompt or a mock-up that
@@ -117,26 +137,6 @@ file — the interface labels are in Polish; the shell is yours.</i></p>
 <p align="center">
   <img src="docs/assets/screenshot-assistant.png" alt="AI assistant panel docked next to the terminal" width="100%">
 </p>
-
-## Download
-
-**[⬇ Latest release](https://github.com/bkleparski/eDEX-UI-BK/releases/latest)**
-
-| Platform | File |
-| --- | --- |
-| macOS (Apple Silicon) | `.dmg` or `.zip`, arm64 — open and drag to `Applications` |
-| Linux x86_64 | `.AppImage`, x86_64 — `chmod +x` and run, any distro |
-| Linux arm64 | `.AppImage`, arm64 |
-| Windows 10/11 x64 | `.exe` (portable, no installer) — also runs on Windows on ARM through its built-in x64 emulation |
-
-> **None of these are signed or notarised.** macOS: right-click the app → **Open** → confirm
-> **Open** (Gatekeeper otherwise reports an unidentified developer). Windows: SmartScreen will
-> warn when you run the `.exe` — click **More info** → **Run anyway**. Linux needs nothing extra
-> beyond the `chmod +x`.
-
-> **Keep a single copy (macOS).** Two builds of this app in different folders share one bundle
-> identifier, and macOS may then open whichever it finds first — which looks exactly like
-> your changes not taking effect.
 
 ## Keyboard shortcuts
 
