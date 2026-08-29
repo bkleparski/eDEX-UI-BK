@@ -261,6 +261,54 @@ single component.
 The renderer runs sandboxed with a strict CSP (`connect-src 'none'`): it cannot reach the
 network at all. Every outbound request goes through the main process.
 
+## Web mode & Docker
+
+The renderer has no Electron API calls baked into it — `src/preload.js`'s five globals
+(`terminalApi`, `monitoringApi`, `filesApi`, `settingsApi`, `assistantApi`) are the only surface
+it touches, and every renderer file talks to those, never to Electron directly. `src/server/index.js`
+implements that same contract over a WebSocket instead of `contextBridge`, so the identical UI —
+terminal, telemetry, file manager, assistant — runs in a plain browser tab, on macOS or Linux,
+with no Electron in the loop.
+
+**Run it directly:**
+
+```bash
+npm run web
+```
+
+Prints a URL with a token on stdout — `http://127.0.0.1:3040/?token=…` — open it in a browser.
+Set `EDEX_WEB_TOKEN` yourself to pin it instead of getting a random one every run; `EDEX_WEB_PORT`
+(default `3040`) and `EDEX_WEB_BIND` (default `127.0.0.1`) are also overridable.
+
+**Run it in Docker** (the way to get it onto a Linux host; also works on macOS):
+
+```bash
+EDEX_WEB_TOKEN=$(openssl rand -hex 32) docker compose up -d --build
+docker compose logs   # same URL, for the token you just set
+```
+
+`docker-compose.yml` publishes `127.0.0.1:3040` on the host — loopback only, matching the
+bare-metal default — and keeps settings/custom themes in a named volume across restarts (same
+shape as `userData` above, mounted at `/data` instead). **Always set `EDEX_WEB_TOKEN` yourself
+when using Compose** — unlike running the server directly, its default falls back to the literal
+placeholder string committed in `docker-compose.yml`, not a randomly generated one.
+
+> **The token is a shell on whatever machine is running the server.** Anyone who has it can run
+> arbitrary commands as that user, read, write or permanently delete any file it can reach, and
+> read or change its AI provider settings. Never publish the port to the internet — reach it
+> remotely only through something already trusted in front of it (a Cloudflare Tunnel, an SSH
+> port-forward), the same way you'd treat a password to the box itself.
+
+**Requirements:** macOS needs Docker Desktop or [Colima](https://github.com/abiosoft/colima)
+running before `docker compose up`; Linux just needs Docker itself, no VM layer in between.
+
+**Differences from the Electron app:**
+- No OS Trash — deleting a file is permanent (`fs.rm`), and the confirmation dialog says so instead of offering "Move to Trash"
+- No "Reveal in Finder" and no opening a file in its system default app — there's no Finder or `open` for the server to hand it to
+- Native folder-picker and confirm dialogs are replaced with HUD-styled ones drawn into the page itself
+- No `ai`/`search` shell commands — the local CLI bridge that wires those into the terminal's environment is Electron-only
+- GPU load, energy impact (`ENERGY`) and live connections (`CONN`) all come from macOS-only tools (`ioreg`, `top -o power`, `lsof`) — running the server itself on macOS still has them, but the Linux/Docker image doesn't, and those panels/buttons just don't appear there; `TOP PROCESSES` sorts by CPU/memory only
+
 ## Development
 
 Only needed if you want to change the code — users install the `.dmg` above.

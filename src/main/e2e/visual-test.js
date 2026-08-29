@@ -32,6 +32,38 @@ function setupFixtures(context) {
     fs.truncateSync(visualBrowserLargeImage, IMAGE_PREVIEW_MAX_BYTES + 1);
 }
 
+// Polls a renderer-side boolean expression from the main process, instead of
+// assuming it becomes true within some fixed wall-clock delay. The injected
+// interaction script below chains a long sequence of real IPC/PTY round
+// trips (a BSD `top` sample alone costs ~1s of real wall time by design; a
+// full shell respawn, several file-listing IPC calls, and a handful of
+// artificial UI-timing waits stack on top of that) — on an idle machine that
+// finishes in a few seconds, but under CPU contention it can take
+// meaningfully longer, and a fixed deadline that assumes the idle case reads
+// the app's state mid-sequence instead of failing outright. Bounded by
+// timeoutMs so a genuinely broken sequence still fails instead of hanging.
+function waitForRendererCondition(webContents, expression, { intervalMs = 75, timeoutMs = 60_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const poll = async () => {
+      let ready = false;
+      try {
+        ready = await webContents.executeJavaScript(expression);
+      } catch {
+        // Renderer not ready yet (still loading) — treat as "not yet".
+      }
+      if (ready) {
+        resolve(true);
+      } else if (Date.now() >= deadline) {
+        resolve(false);
+      } else {
+        setTimeout(poll, intervalMs);
+      }
+    };
+    poll();
+  });
+}
+
 function runVisualTest(window, context) {
   const {
     visualBrowserRoot, visualBrowserChild, visualBrowserFile, visualBrowserImage,
@@ -454,12 +486,40 @@ function runVisualTest(window, context) {
               );
             }
           );
-          setTimeout(() => dispatchTestFileDrag(false), 10_500);
+          // Re-enters drag-hover (dragenter+dragover, no drop) without ever
+          // firing dragleave/drop/dragend afterwards — this is the second,
+          // independent thing (besides the TTY chain) diagnostics needs to
+          // wait for: the drop indicator has to still be showing when
+          // captured, which only holds once this fires. finalDragRearmed
+          // marks that so waitForRendererCondition can wait for both signals
+          // instead of just outrunning this fixed-delay step (see its call
+          // site below).
+          setTimeout(() => {
+            dispatchTestFileDrag(false);
+            document.body.dataset.finalDragRearmed = 'true';
+          }, 10_500);
         })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
       }, 2_000);
 
       setTimeout(async () => {
         try {
+          // Two independent things have to be true before diagnostics mean
+          // anything: the TTY context-menu/rename/auto-name/close chain has
+          // to reach its last step (ttyFinalMenuReady), and the drop
+          // indicator's second, no-drop re-hover has to have fired
+          // (finalDragRearmed) — otherwise dropIndicatorVisible reads
+          // whatever it happened to be mid-sequence. They used to be
+          // implicitly ordered by both finishing well within one fixed
+          // 17.5s delay; waiting for a real signal instead (rather than
+          // assuming that's always enough) is what makes this survive a
+          // busy machine — see waitForRendererCondition's comment above.
+          const sequenceFinished = await waitForRendererCondition(
+            window.webContents,
+            "document.body.dataset.ttyFinalMenuReady === 'true' && document.body.dataset.finalDragRearmed === 'true'"
+          );
+          if (!sequenceFinished) {
+            console.warn('TTY lifecycle / drop-indicator re-arm sequence did not finish within the poll budget — capturing diagnostics anyway so the failure below is visible.');
+          }
           const diagnostics = await window.webContents.executeJavaScript(`({
             fonts: {
               terminal: document.fonts.check('14px "Monaspace Neon NF"'),
@@ -933,7 +993,10 @@ function runVisualTest(window, context) {
           process.exitCode = 1;
         }
         app.quit();
-      }, 17_500);
+      // Matches the interaction script's own kickoff delay above (line ~43)
+      // — waitForRendererCondition does the actual waiting now, this just
+      // avoids polling a page that hasn't even started the sequence yet.
+      }, 2_000);
     });
 }
 
