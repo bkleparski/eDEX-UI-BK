@@ -1,0 +1,69 @@
+name: Build
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+            artifact: ebartnet-ui-mac-arm64
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact: ebartnet-ui-linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            artifact: ebartnet-ui-linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # electron-builder bundles its own AppImage tooling, but some GitHub
+      # ubuntu runners are missing the archive/squashfs CLIs it shells out to
+      # when packaging an AppImage. Cheap to install, harmless if unused.
+      - name: Install AppImage packaging deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools squashfs-tools
+
+      # postinstall runs `electron-builder install-app-deps` with no --arch
+      # override, so node-pty gets rebuilt against this runner's own
+      # architecture — which always matches the target below.
+      - run: npm ci
+
+      - name: Build (macOS arm64)
+        if: matrix.target == 'mac'
+        run: npx electron-builder --mac --arm64 --publish=never
+
+      - name: Build (Linux x64 AppImage)
+        if: matrix.target == 'linux-x64'
+        run: npx electron-builder --linux AppImage --x64 --publish=never
+
+      - name: Build (Linux arm64 AppImage)
+        if: matrix.target == 'linux-arm64'
+        run: npx electron-builder --linux AppImage --arm64 --publish=never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+          if-no-files-found: error
