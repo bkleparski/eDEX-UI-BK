@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  defaultShell, shellSpawnArgs, processIdentity, terminalWorkingDirectory, collectTerminalMetadata
+  defaultShell, shellSpawnArgs, win32ShellArgs, processIdentity, terminalWorkingDirectory,
+  collectTerminalMetadata, sanitizeReportedCwd, reportTerminalCwd
 } = require('../src/main/terminal-metadata');
 
 // These tests run on whatever CI/dev machine executes `npm run test:unit`
@@ -106,4 +107,74 @@ test('collectTerminalMetadata falls back to the process name when idle but cwd i
   assert.equal(result.idle, true);
   assert.equal(result.cwd, null);
   assert.equal(result.label, 'powershell');
+});
+
+test('win32ShellArgs injects the OSC 7 prompt wrapper for pwsh.exe and powershell.exe', () => {
+  const scriptDir = makeTempDir();
+  const scriptPath = path.join(scriptDir, 'osc7-prompt.ps1');
+  const scriptSource = "function global:prompt { 'PS> ' }";
+  fs.writeFileSync(scriptPath, scriptSource, 'utf8');
+
+  // Forward slashes, not backslashes — path.basename on this (POSIX) test
+  // runner only splits on '/'. On real Windows, `path` is win32-flavored and
+  // splits on '\' too; see the module-level comment in
+  // test/terminal-metadata.test.js about this being a POSIX-runner limit.
+  for (const shell of ['C:/Tools/pwsh.exe', 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', 'C:/x/POWERSHELL.EXE']) {
+    const args = win32ShellArgs(shell, scriptPath);
+    assert.deepEqual(args.slice(0, 2), ['-NoExit', '-EncodedCommand']);
+    assert.equal(Buffer.from(args[2], 'base64').toString('utf16le'), scriptSource);
+  }
+});
+
+test('win32ShellArgs returns no extra args for cmd.exe or when the script is missing', () => {
+  const scriptDir = makeTempDir();
+  const realScript = path.join(scriptDir, 'osc7-prompt.ps1');
+  fs.writeFileSync(realScript, 'function global:prompt { "" }', 'utf8');
+
+  assert.deepEqual(win32ShellArgs('C:\\Windows\\System32\\cmd.exe', realScript), []);
+  assert.deepEqual(win32ShellArgs('C:\\Tools\\pwsh.exe', null), []);
+  assert.deepEqual(win32ShellArgs('C:\\Tools\\pwsh.exe', path.join(scriptDir, 'missing.ps1')), []);
+});
+
+test('sanitizeReportedCwd rejects non-strings, empty strings, oversized input and control characters', () => {
+  assert.equal(sanitizeReportedCwd('C:\\Users\\bartek'), 'C:\\Users\\bartek');
+  assert.equal(sanitizeReportedCwd(''), null);
+  assert.equal(sanitizeReportedCwd(null), null);
+  assert.equal(sanitizeReportedCwd(42), null);
+  assert.equal(sanitizeReportedCwd('a'.repeat(5000)), null);
+  assert.equal(sanitizeReportedCwd('C:\\evil\x1b]0;pwned\x07'), null);
+});
+
+test('reportTerminalCwd marks the state as osc7-sourced and stamps cwdCheckedAt', () => {
+  const state = { cwd: null, cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null };
+  const ok = reportTerminalCwd(state, 'C:\\Users\\bartek\\project', 9999);
+  assert.equal(ok, true);
+  assert.equal(state.cwd, 'C:\\Users\\bartek\\project');
+  assert.equal(state.cwdSource, 'osc7');
+  assert.equal(state.cwdCheckedAt, 9999);
+});
+
+test('reportTerminalCwd leaves the state untouched for garbage input or a missing state', () => {
+  const state = { cwd: '/old', cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null };
+  assert.equal(reportTerminalCwd(state, ''), false);
+  assert.equal(state.cwd, '/old');
+  assert.equal(state.cwdSource, null);
+  assert.equal(reportTerminalCwd(null, '/somewhere'), false);
+});
+
+test('collectTerminalMetadata stops polling lsof/procfs once a session has an osc7-sourced cwd', async () => {
+  // An invalid pid makes terminalWorkingDirectory reject immediately, before
+  // any platform-specific lookup — but cwdCheckedAt still gets stamped the
+  // moment the lookup branch is *entered*, so it doubles as a "was this
+  // attempted at all" probe independent of whether the lookup itself works.
+  const terminal = { pid: undefined, process: 'zsh' };
+
+  const osc7State = { cwd: '/reported/by/osc7', cwdSource: 'osc7', cwdCheckedAt: 0, commandStartedAt: null, commandName: null };
+  await collectTerminalMetadata(terminal, osc7State, 12345);
+  assert.equal(osc7State.cwdCheckedAt, 0, 'lookup must not run once osc7 has reported');
+  assert.equal(osc7State.cwd, '/reported/by/osc7');
+
+  const lookupState = { cwd: '/reported/by/osc7', cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null };
+  await collectTerminalMetadata(terminal, lookupState, 12345);
+  assert.equal(lookupState.cwdCheckedAt, 12345, 'lookup runs as normal without an osc7 report');
 });

@@ -85,7 +85,16 @@
         "to": "bin",
         "filter": [
           "ai",
-          "search"
+          "search",
+          "ai.cmd",
+          "search.cmd"
+        ]
+      },
+      {
+        "from": "resources/shell-integration",
+        "to": "shell-integration",
+        "filter": [
+          "osc7-prompt.ps1"
         ]
       }
     ],

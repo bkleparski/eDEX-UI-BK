@@ -19,7 +19,9 @@ const {
 } = require('./main/files-operations');
 const { safeLabel } = require('./main/format-utils');
 const { MONITOR_INTERVAL_MS, createMonitoringSession, collectMonitoringSample } = require('./main/monitoring');
-const { collectTerminalMetadata, defaultShell, shellSpawnArgs } = require('./main/terminal-metadata');
+const {
+  collectTerminalMetadata, defaultShell, shellSpawnArgs, win32ShellArgs, reportTerminalCwd
+} = require('./main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('./main/themes');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
@@ -250,10 +252,11 @@ function registerTerminalIpc() {
     const cols = Number.isInteger(options.cols) ? Math.min(Math.max(options.cols, 2), 500) : 80;
     const rows = Number.isInteger(options.rows) ? Math.min(Math.max(options.rows, 1), 300) : 24;
     const shell = defaultShell();
-    const assistantBinPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'bin')
-      : path.join(__dirname, '..', 'resources', 'bin');
-    const terminal = pty.spawn(shell, shellSpawnArgs(), {
+    const resourcesRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'resources');
+    const assistantBinPath = path.join(resourcesRoot, 'bin');
+    const osc7ScriptPath = path.join(resourcesRoot, 'shell-integration', 'osc7-prompt.ps1');
+    const spawnArgs = process.platform === 'win32' ? win32ShellArgs(shell, osc7ScriptPath) : shellSpawnArgs();
+    const terminal = pty.spawn(shell, spawnArgs, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -269,7 +272,7 @@ function registerTerminalIpc() {
 
     clientTerminals.set(sessionId, terminal);
     ensureTerminalMetadataSession(event.sender, sessionId).states.set(sessionId, {
-      cwd: os.homedir(), cwdCheckedAt: 0, commandStartedAt: null, commandName: null
+      cwd: os.homedir(), cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null
     });
 
     terminal.onData((data) => {
@@ -326,6 +329,17 @@ function registerTerminalIpc() {
     if (!isTrustedSender(event) || !sessionId || !terminals.get(event.sender.id)?.has(sessionId)) return;
     const metadataSession = ensureTerminalMetadataSession(event.sender, sessionId);
     metadataSession.activeSessionId = sessionId;
+  });
+
+  // OSC 7 cwd reports (see osc7-cwd.js / terminal-metadata.js) — the
+  // renderer already decoded the file:// URI, this just re-validates it as
+  // untrusted text (it originated in terminal output) before it lands in
+  // metadata state and out to renderTabLabel.
+  ipcMain.on('terminal:report-cwd', (event, payload) => {
+    const sessionId = validSessionId(payload?.sessionId);
+    if (!isTrustedSender(event) || !sessionId || !terminals.get(event.sender.id)?.has(sessionId)) return;
+    const state = terminalMetadataSessions.get(event.sender.id)?.states.get(sessionId);
+    if (state) reportTerminalCwd(state, payload?.cwd);
   });
 
   ipcMain.on('terminal:smoke-result', (event, result) => {

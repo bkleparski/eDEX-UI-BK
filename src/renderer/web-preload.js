@@ -117,6 +117,7 @@
     resize: (sessionId, cols, rows) => send('terminalApi', 'resize', [sessionId, cols, rows]),
     close: (sessionId) => send('terminalApi', 'close', [sessionId]),
     setActive: (sessionId) => send('terminalApi', 'setActive', [sessionId]),
+    reportCwd: (sessionId, cwd) => send('terminalApi', 'reportCwd', [sessionId, cwd]),
     onData: (callback) => subscribe('terminal:data', callback),
     onMetadata: (callback) => subscribe('terminal:metadata', callback),
     onExit: (callback) => subscribe('terminal:exit', callback),

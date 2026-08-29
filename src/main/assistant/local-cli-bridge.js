@@ -42,15 +42,21 @@ function readRequestBody(request) {
 }
 
 class LocalCliBridge {
-  constructor({ userDataPath, assistantService, configStore, fsImpl = fs } = {}) {
+  // `platform` is a constructor override for unit tests only — production
+  // callers always take the process.platform default. Windows has no AF_UNIX
+  // support worth relying on from Node's http server, so it gets a loopback
+  // TCP port instead of the socket file every other platform uses.
+  constructor({ userDataPath, assistantService, configStore, fsImpl = fs, platform = process.platform } = {}) {
     if (!path.isAbsolute(userDataPath || '') || !assistantService || !configStore) {
       throw new TypeError('LocalCliBridge requires userDataPath, assistantService and configStore.');
     }
     this.fs = fsImpl;
     this.assistantService = assistantService;
     this.configStore = configStore;
+    this.platform = platform;
     this.directory = path.join(userDataPath, 'run');
     this.socketPath = path.join(this.directory, 'assistant.sock');
+    this.port = null;
     this.token = randomBytes(32).toString('hex');
     this.server = null;
     this.controllers = new Set();
@@ -58,14 +64,17 @@ class LocalCliBridge {
 
   environment(binPath) {
     if (!this.server?.listening) return {};
-    return {
-      EDEX_AI_SOCKET: this.socketPath,
+    const base = {
       EDEX_AI_TOKEN: this.token,
-      PATH: `${binPath}:${process.env.PATH || '/usr/bin:/bin'}`
+      PATH: `${binPath}${path.delimiter}${process.env.PATH || (this.platform === 'win32' ? '' : '/usr/bin:/bin')}`
     };
+    return this.platform === 'win32'
+      ? { ...base, EDEX_AI_PORT: String(this.port) }
+      : { ...base, EDEX_AI_SOCKET: this.socketPath };
   }
 
   prepareSocket() {
+    if (this.platform === 'win32') return;
     this.fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     try {
       const stat = this.fs.lstatSync(this.socketPath);
@@ -77,12 +86,22 @@ class LocalCliBridge {
   }
 
   start() {
-    if (this.server?.listening) return Promise.resolve(this.socketPath);
+    if (this.server?.listening) return Promise.resolve(this.platform === 'win32' ? this.port : this.socketPath);
     this.prepareSocket();
     this.server = http.createServer((request, response) => this.handle(request, response));
     return new Promise((resolve, reject) => {
       const fail = (error) => reject(error);
       this.server.once('error', fail);
+      if (this.platform === 'win32') {
+        // 127.0.0.1 only, never 0.0.0.0 — this must not be reachable from the
+        // LAN. Port 0 asks the OS for any free ephemeral port.
+        this.server.listen(0, '127.0.0.1', () => {
+          this.server.removeListener('error', fail);
+          this.port = this.server.address().port;
+          resolve(this.port);
+        });
+        return;
+      }
       this.server.listen(this.socketPath, () => {
         this.server.removeListener('error', fail);
         this.fs.chmodSync(this.socketPath, 0o600);
@@ -168,6 +187,8 @@ class LocalCliBridge {
       await new Promise((resolve) => this.server.close(() => resolve()));
       this.server = null;
     }
+    this.port = null;
+    if (this.platform === 'win32') return;
     try {
       const stat = this.fs.lstatSync(this.socketPath);
       if (stat.isSocket()) this.fs.unlinkSync(this.socketPath);

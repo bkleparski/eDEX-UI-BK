@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('terminalApi', Object.freeze({
   resize: (sessionId, cols, rows) => ipcRenderer.send('terminal:resize', { sessionId, cols, rows }),
   close: (sessionId) => ipcRenderer.send('terminal:close', { sessionId }),
   setActive: (sessionId) => ipcRenderer.send('terminal:set-active', { sessionId }),
+  reportCwd: (sessionId, cwd) => ipcRenderer.send('terminal:report-cwd', { sessionId, cwd }),
   onData: (callback) => subscribe('terminal:data', callback),
   onMetadata: (callback) => subscribe('terminal:metadata', callback),
   onExit: (callback) => subscribe('terminal:exit', callback),

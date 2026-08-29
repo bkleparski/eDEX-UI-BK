@@ -171,6 +171,7 @@ const rendererSharedGlobals = {
   paneResizeObserver: 'readonly',
   paneZoomPath: 'readonly',
   panelDropTestMarker: 'readonly',
+  parseOsc7Cwd: 'readonly',
   pasteWarningSessionId: 'readonly',
   pasteWarningText: 'readonly',
   playCommandCompleteSound: 'readonly',
@@ -325,6 +326,18 @@ module.exports = [
       globals: {
         ...rendererEnvGlobals,
         ...withoutOwn('applyPlatformShortcutGlyphs', 'primaryModifier', 'quoteShellPath', 'secondaryPlatformModifier')
+      }
+    },
+    rules: rendererRules
+  },
+  {
+    files: ['src/renderer/osc7-cwd.js'],
+    languageOptions: {
+      sourceType: 'script',
+      ecmaVersion: 'latest',
+      globals: {
+        ...rendererEnvGlobals,
+        ...withoutOwn('parseOsc7Cwd')
       }
     },
     rules: rendererRules

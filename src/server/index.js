@@ -29,7 +29,7 @@ const {
   createImagePreviewCache, defaultImagePreviewEncode, previewImageFile, listDirectoryFiles, listTerminalFiles
 } = require('../main/files-operations');
 const { createMonitoringSession, collectMonitoringSample, MONITOR_INTERVAL_MS } = require('../main/monitoring');
-const { collectTerminalMetadata, defaultShell, shellSpawnArgs } = require('../main/terminal-metadata');
+const { collectTerminalMetadata, defaultShell, shellSpawnArgs, reportTerminalCwd } = require('../main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('../main/themes');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
@@ -477,7 +477,7 @@ async function handleTerminalStart(state, args) {
   });
 
   state.terminals.set(id, terminal);
-  state.metadataStates.set(id, { cwd: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null });
+  state.metadataStates.set(id, { cwd: null, cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null });
 
   terminal.onData((data) => pushEvent(state.ws, 'terminal:data', { sessionId: id, data }));
   terminal.onExit(({ exitCode, signal }) => {
@@ -511,6 +511,10 @@ const HANDLERS = {
   'terminalApi:setActive': (state, [sessionId]) => {
     const id = validSessionId(sessionId);
     if (id && state.terminals.has(id)) state.activeSessionId = id;
+  },
+  'terminalApi:reportCwd': (state, [sessionId, cwd]) => {
+    const id = validSessionId(sessionId);
+    if (id) reportTerminalCwd(state.metadataStates.get(id), cwd);
   },
   'terminalApi:reportSmokeResult': () => {},
 

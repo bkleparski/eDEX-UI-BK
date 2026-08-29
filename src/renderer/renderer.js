@@ -930,6 +930,18 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
     theme: themedTerminalPalette(appearance)
   });
 
+  // OSC 7 (ESC ]7;file://host/path BEL) is how a shell prompt hook reports
+  // its cwd — the only source of truth on win32, where there's no /proc or
+  // lsof to poll (see terminal-metadata.js). main.js/server's own state for
+  // this session stops trusting its lookup-based cwd the moment one of
+  // these arrives (see collectTerminalMetadata), so this always wins once
+  // the resources/*.ps1 prompt wrapper is active.
+  terminal.parser.registerOscHandler(7, (data) => {
+    const cwd = parseOsc7Cwd(data);
+    if (cwd) window.terminalApi.reportCwd(sessionId, cwd);
+    return true;
+  });
+
   const fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
   const searchAddon = new SearchAddon.SearchAddon();

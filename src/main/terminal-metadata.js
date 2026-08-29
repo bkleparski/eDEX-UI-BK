@@ -55,9 +55,36 @@ function defaultShell(platform = process.platform) {
 
 // `-l` (login shell) is a POSIX shell flag. pwsh.exe/powershell.exe treat an
 // unrecognized leading argument as a script path and fail to start; cmd.exe
-// would try to run it as a command. So Windows gets no extra args at all.
+// would try to run it as a command. So Windows gets no extra args at all —
+// see win32ShellArgs below for what PowerShell actually gets instead.
 function shellSpawnArgs(platform = process.platform) {
   return platform === 'win32' ? [] : ['-l'];
+}
+
+function isPowerShellExecutable(shellPath) {
+  const base = path.basename(String(shellPath || '')).toLowerCase();
+  return base === 'pwsh.exe' || base === 'powershell.exe';
+}
+
+// Injects the OSC 7 cwd-reporting prompt wrapper (see
+// resources/shell-integration/osc7-prompt.ps1) without ever touching the
+// user's own $PROFILE. `-EncodedCommand` runs arbitrary script text as if
+// typed at the prompt — unlike `-File` or a dot-sourced path, it isn't
+// gated by the machine's script execution policy, which a locked-down
+// corporate Windows box may well have set to something that blocks
+// unsigned .ps1 files outright. Profiles still load first as normal
+// (nothing here passes -NoProfile), so the script wraps whatever `prompt`
+// the user already has, not PowerShell's bare default.
+function win32ShellArgs(shellPath, osc7ScriptPath) {
+  if (!isPowerShellExecutable(shellPath) || !osc7ScriptPath) return [];
+  let scriptSource;
+  try {
+    scriptSource = fs.readFileSync(osc7ScriptPath, 'utf8');
+  } catch {
+    return []; // Script missing — degrade to no cwd tracking, don't break the spawn.
+  }
+  const encodedCommand = Buffer.from(scriptSource, 'utf16le').toString('base64');
+  return ['-NoExit', '-EncodedCommand', encodedCommand];
 }
 
 function terminalWorkingDirectoryViaLsof(terminal) {
@@ -149,9 +176,37 @@ function detectCompletedCommand(state, processInfo, now) {
   return durationMs >= SLOW_COMMAND_THRESHOLD_MS ? { name, durationMs } : null;
 }
 
+// A shell prompt hook (OSC 7) pushes its cwd straight into state.cwd from
+// the IPC handler in main.js/server — see reportTerminalCwd below. Once
+// that has happened for a session, it's strictly better than lsof/procfs
+// (it's exact, and it's the *only* source at all on win32), so the periodic
+// lookup below stops running entirely rather than racing it.
+const MAX_REPORTED_CWD_LENGTH = 4_096;
+const REPORTED_CWD_CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
+function sanitizeReportedCwd(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REPORTED_CWD_LENGTH) return null;
+  if (REPORTED_CWD_CONTROL_CHARS.test(value)) return null;
+  return value;
+}
+
+// Shared by the IPC handler in main.js and the WS handler in server/index.js
+// so both re-validate the renderer's decoded OSC 7 payload the same way
+// rather than trusting it — the renderer isn't a fully untrusted process,
+// but the *text it decoded* originated in terminal output, which a remote
+// shell (an ssh session, say) can fill with whatever it wants.
+function reportTerminalCwd(state, value, now = Date.now()) {
+  const cwd = sanitizeReportedCwd(value);
+  if (!cwd || !state) return false;
+  state.cwd = cwd;
+  state.cwdSource = 'osc7';
+  state.cwdCheckedAt = now;
+  return true;
+}
+
 async function collectTerminalMetadata(terminal, state, now) {
   const processInfo = processIdentity(terminal.process);
-  if (processInfo.idle && (!state.cwd || now - state.cwdCheckedAt >= 1_000)) {
+  if (processInfo.idle && state.cwdSource !== 'osc7' && (!state.cwd || now - state.cwdCheckedAt >= 1_000)) {
     state.cwdCheckedAt = now;
     try {
       state.cwd = await terminalWorkingDirectory(terminal);
@@ -180,9 +235,12 @@ module.exports = {
   SLOW_COMMAND_THRESHOLD_MS,
   defaultShell,
   shellSpawnArgs,
+  win32ShellArgs,
   terminalWorkingDirectory,
   processIdentity,
   compactWorkingDirectory,
   detectCompletedCommand,
-  collectTerminalMetadata
+  collectTerminalMetadata,
+  sanitizeReportedCwd,
+  reportTerminalCwd
 };

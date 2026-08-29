@@ -29,7 +29,7 @@ function requestBridge(bridge, { command = '/ai', body = 'hello', provider = 'ol
   });
 }
 
-async function bridgeFixture(t, run) {
+async function bridgeFixture(t, run, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'edex-cli-test-'));
   const calls = [];
   const assistantService = {
@@ -41,13 +41,35 @@ async function bridgeFixture(t, run) {
     }
   };
   const configStore = { get: () => ({ selection: { models: { ollama: 'gemma4:e4b', lmstudio: 'google/gemma-4-12b' } } }) };
-  const bridge = new LocalCliBridge({ userDataPath: directory, assistantService, configStore });
+  const bridge = new LocalCliBridge({ userDataPath: directory, assistantService, configStore, ...options });
   await bridge.start();
   t.after(async () => {
     await bridge.stop();
     fs.rmSync(directory, { recursive: true, force: true });
   });
   return { bridge, calls };
+}
+
+function requestBridgeTcp(bridge, { command = '/ai', body = 'hello', provider = 'ollama', token = bridge.token } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      host: '127.0.0.1',
+      port: bridge.port,
+      path: command,
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-eDEX-Provider': provider,
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    request.on('error', reject);
+    request.end(body);
+  });
 }
 
 test('terminal sanitizer removes ANSI, OSC and control bytes', () => {
@@ -88,4 +110,37 @@ test('CLI bridge keeps concurrent terminal requests independent', async (t) => {
   assert.equal(ollama.body.startsWith('ollama'), true);
   assert.equal(lmstudio.body.startsWith('lmstudio'), true);
   assert.deepEqual(new Set(calls.map((call) => call.provider)), new Set(['ollama', 'lmstudio']));
+});
+
+test('on win32 the bridge listens on loopback TCP instead of a unix socket', async (t) => {
+  const { bridge } = await bridgeFixture(t, async (_request, onEvent) => {
+    onEvent({ type: 'text-delta', text: 'pong' });
+  }, { platform: 'win32' });
+  assert.equal(typeof bridge.port, 'number');
+  assert.ok(bridge.port > 0);
+  const response = await requestBridgeTcp(bridge);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.startsWith('pong'), true);
+});
+
+test('win32 environment() exposes EDEX_AI_PORT and a ; PATH, never EDEX_AI_SOCKET', async (t) => {
+  const { bridge } = await bridgeFixture(t, async () => {}, { platform: 'win32' });
+  const env = bridge.environment('C:\\edex\\bin');
+  assert.equal(env.EDEX_AI_PORT, String(bridge.port));
+  assert.equal('EDEX_AI_SOCKET' in env, false);
+  assert.ok(env.PATH.startsWith(`C:\\edex\\bin${path.delimiter}`));
+});
+
+test('non-win32 environment() keeps EDEX_AI_SOCKET and never exposes EDEX_AI_PORT', async (t) => {
+  const { bridge } = await bridgeFixture(t, async () => {});
+  const env = bridge.environment('/edex/bin');
+  assert.equal(env.EDEX_AI_SOCKET, bridge.socketPath);
+  assert.equal('EDEX_AI_PORT' in env, false);
+});
+
+test('win32 loopback bridge still enforces its per-process token', async (t) => {
+  const { bridge, calls } = await bridgeFixture(t, async () => {}, { platform: 'win32' });
+  const response = await requestBridgeTcp(bridge, { token: 'invalid' });
+  assert.equal(response.status, 401);
+  assert.equal(calls.length, 0);
 });
