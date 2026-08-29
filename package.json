@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "private": true,
   "author": "Bartłomiej Kleparski",
-  "description": "EBARTNET-UI — native Apple Silicon terminal for macOS with a Tron-inspired HUD, live telemetry, file browser and a multi-provider AI assistant.",
+  "description": "EBARTNET-UI — a multi-platform (macOS, Linux, Windows) terminal with a Tron-inspired HUD, live telemetry, file browser and a multi-provider AI assistant.",
   "keywords": [
     "terminal",
     "electron",

@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="EBARTNET-UI — GRID TERMINAL for macOS on Apple Silicon" width="100%">
+  <img src="docs/assets/hero.svg" alt="EBARTNET-UI — GRID TERMINAL, multi-platform" width="100%">
 </p>
 
 <p align="center">
-  <a href="#quick-start"><img src="https://img.shields.io/badge/platform-macOS%20arm64-00e5ff?style=flat-square&labelColor=02080a" alt="Platform: macOS arm64"></a>
+  <a href="#download"><img src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-00e5ff?style=flat-square&labelColor=02080a" alt="Platform: macOS, Linux, Windows"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/electron-43.x-00e5ff?style=flat-square&labelColor=02080a" alt="Electron 43"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%E2%89%A522-00e5ff?style=flat-square&labelColor=02080a" alt="Node 22+"></a>
   <a href="#ai-assistant"><img src="https://img.shields.io/badge/AI-Ollama%20%7C%20LM%20Studio%20%7C%20OpenRouter-ff9f1c?style=flat-square&labelColor=02080a" alt="AI providers"></a>
@@ -12,8 +12,8 @@
 
 <p align="center">
   <b>A real terminal that looks like it fell out of the Grid.</b><br>
-  Native Apple Silicon, a genuine zsh PTY with iTerm2-style split panes, live system<br>
-  telemetry, a file manager and an AI assistant that runs on your own machine.
+  Native on macOS (Apple Silicon), Linux and Windows, a genuine PTY with iTerm2-style split panes,<br>
+  live system telemetry, a file manager and an AI assistant that runs on your own machine.
 </p>
 
 <p align="center">
@@ -26,8 +26,9 @@
 
 Most "futuristic terminal" projects are either a pretty shell prompt or a mock-up that
 cannot actually run a shell. EBARTNET-UI is a working terminal first: `node-pty` spawns a
-real login `zsh`, `xterm.js` renders it, and every HUD panel around it is fed by live system
-data — not animation loops.
+real login shell — `zsh` on macOS, `bash`/`sh` on Linux, PowerShell/`cmd.exe` over ConPTY on
+Windows — `xterm.js` renders it, and every HUD panel around it is fed by live system data —
+not animation loops.
 
 It is written from scratch. The visual language is a tribute to [eDEX-UI](https://github.com/GitSquared/edex-ui)
 and *Tron: Legacy*; none of the original source was copied.
@@ -39,7 +40,8 @@ and *Tron: Legacy*; none of the original source was copied.
 ## Features
 
 **Terminal that is actually a terminal**
-- Real `zsh` login shell through `node-pty`, rebuilt for `arm64`
+- A real login shell through `node-pty` — `zsh`/`bash`/`sh` on macOS/Linux, PowerShell 7 →
+  Windows PowerShell → `cmd.exe` over ConPTY on Windows, whichever the OS actually has
 - Multiple tabs (`⌘T`), rename, close, automatic respawn when a shell exits
 - **Split panes inside a tab** (`⌘D` / `⇧⌘D`), nested to any depth, each pane its own shell
 - Full-pane zoom (`⇧⌘⏎`) without disturbing the split layout underneath
@@ -48,15 +50,15 @@ and *Tron: Legacy*; none of the original source was copied.
 - Clickable URLs open in your default browser; WebGL-accelerated rendering with a silent canvas fallback
 - `⌘K` clears the active pane's scrollback; a HUD dialog warns before a multi-line paste actually lands
 - Scrollback depth is configurable in `SETTINGS` (1K–100K lines), applied live
-- A background pane's tab/chip lights up once a command running ≥15s finishes, with an optional chime
+- A background pane's tab/chip lights up once a command running ≥15s finishes, with an optional chime (macOS/Linux — see [Platform notes](#platform-notes) for why Windows can't)
 - An optional on-screen keyboard (`⇧⌘K`) lights up each key as you type — display-only, it never reads or injects input
 
 **Live telemetry, not decoration**
 - CPU load with per-core bars and history sparkline
-- GPU load with a render/tiler breakdown, read from the same IOAccelerator counters Activity Monitor uses — no extra permission prompt
+- GPU load with a render/tiler breakdown, read from the same IOAccelerator counters Activity Monitor uses — no extra permission prompt (macOS only, see [Platform notes](#platform-notes))
 - Memory broken down into used / cached / available / free / swap, with a segmented bar
 - Disk usage, network throughput, LAN + public IPv4, latency, battery
-- Top processes sortable by CPU, memory or energy impact — or flip the same panel to CONN for the machine's live network connections
+- Top processes sortable by CPU, memory or energy impact (macOS only) — or flip the same panel to CONN for the machine's live network connections (needs `lsof`)
 
 **A file manager, not just a listing**
 - `LIST` · `DETAILS` (size + modified date) · `TILES` (icon grid)
@@ -118,20 +120,30 @@ file — the interface labels are in Polish; the shell is yours.</i></p>
 
 ## Download
 
-**[⬇ EBARTNET-UI 0.1.0 for Apple Silicon (.dmg)](https://github.com/bkleparski/eDEX-UI-BK/releases/latest)**
+**[⬇ Latest release](https://github.com/bkleparski/eDEX-UI-BK/releases/latest)**
 
-Open the `.dmg` and drag the app to `Applications`. That's it — nothing else to install.
+| Platform | File |
+| --- | --- |
+| macOS (Apple Silicon) | `.dmg` or `.zip`, arm64 — open and drag to `Applications` |
+| Linux x86_64 | `.AppImage`, x86_64 — `chmod +x` and run, any distro |
+| Linux arm64 | `.AppImage`, arm64 |
+| Windows 10/11 x64 | `.exe` (portable, no installer) — also runs on Windows on ARM through its built-in x64 emulation |
 
-> **First launch.** The app is ad-hoc signed and not notarised by Apple, so macOS will warn
-> about an unidentified developer. Right-click the icon → **Open** → confirm **Open**.
+> **None of these are signed or notarised.** macOS: right-click the app → **Open** → confirm
+> **Open** (Gatekeeper otherwise reports an unidentified developer). Windows: SmartScreen will
+> warn when you run the `.exe` — click **More info** → **Run anyway**. Linux needs nothing extra
+> beyond the `chmod +x`.
 
-Requires macOS on Apple Silicon (arm64).
-
-> **Keep a single copy.** Two builds of this app in different folders share one bundle
+> **Keep a single copy (macOS).** Two builds of this app in different folders share one bundle
 > identifier, and macOS may then open whichever it finds first — which looks exactly like
 > your changes not taking effect.
 
 ## Keyboard shortcuts
+
+The tables below use macOS glyphs (`⌘⇧⌥`) for brevity. On Linux and Windows, `Ctrl` takes the
+place of `⌘` throughout (see `primaryModifier` in `platform-utils.js`) — the app's own shortcut
+legend in the bottom HUD and the on-screen keyboard both already show the right keys for
+whatever platform you're on, so there's nothing to remember or translate yourself.
 
 **Terminal**
 
@@ -211,9 +223,11 @@ search <query>          # Brave Search + Ollama
 search --lms <query>    # Brave Search + LM Studio
 ```
 
-The shell commands talk to the main process over a per-process Unix socket guarded by a
-random token, and responses are stripped of ANSI and control sequences before they reach
-your terminal. Cloud providers are deliberately **not** reachable from the shell.
+The shell commands talk to the main process over a per-process channel guarded by a random
+token — a Unix socket on macOS/Linux, a loopback-only TCP port (`127.0.0.1`, never `0.0.0.0`)
+on Windows, since ConPTY's environment has no Unix socket to hand it — and responses are
+stripped of ANSI and control sequences before they reach your terminal. Cloud providers are
+deliberately **not** reachable from the shell.
 
 <p align="center">
   <img src="docs/assets/screenshot-settings.png" alt="Assistant settings: providers, models and API keys" width="100%">
@@ -227,17 +241,58 @@ for a single-user local tool, not a recommendation. The renderer process never r
 values, only whether a key is configured. Conversation history lives in memory only and is
 never written to disk.
 
+## Platform notes
+
+The terminal, HUD, file manager and AI assistant are the same app everywhere — a handful of
+things are wired to whatever the underlying OS actually exposes, and degrade cleanly where it
+doesn't.
+
+**macOS**
+- GPU LOAD and per-process ENERGY read Apple-only APIs (`ioreg`, `top -o power`) and simply
+  don't exist on other platforms
+- Live connections (the CONN view) come from `lsof`, which ships with macOS by default
+- Background command-finished badges and cwd tracking read the real foreground process —
+  this works identically on Linux, it's Windows that's the exception (see below)
+
+**Windows**
+- The shell is picked automatically: PowerShell 7 (`pwsh.exe`) if it's on `PATH`, else Windows
+  PowerShell, else `cmd.exe` — spawned over ConPTY, node-pty's native Windows backend
+- There's no `/proc` or `lsof` equivalent to poll for the shell's working directory, so it
+  rides on OSC 7 instead: a small prompt wrapper is injected at spawn time (it wraps whatever
+  `prompt` function is already there — your `$PROFILE` is never touched, never written to) and
+  reports the cwd on every prompt draw. `cmd.exe` has no such hook, so its file panel and tab
+  label fall back to the shell's home directory / process name instead of a real path
+- node-pty's Windows backend also has no live foreground-process introspection, so the
+  "background pane finished a long command" badge never fires there — cwd tracking is
+  unaffected, the app just has no way to tell when a command starts or ends
+- `ai`/`search` reach the local CLI bridge over a loopback TCP port instead of a Unix socket
+  (see [Configuration and keys](#configuration-and-keys) above)
+
+**Linux**
+- Shell fallback is `zsh` → `bash` → `sh`, first one found — the same function macOS uses,
+  it just usually stops at `zsh` there. This is also what the Docker image needs, since
+  `node:22-slim` ships none of them by default until one is installed
+- Everything macOS-only above (GPU, ENERGY) just doesn't appear; CONN needs `lsof` present,
+  which a full desktop distro typically has and a minimal one may not
+
 ## Architecture
 
 ```
 src/
-├── main.js                    Electron main: PTY, telemetry, file IPC, window lifecycle
-├── preload.js                 contextBridge — the only renderer↔main surface
+├── main.js                    Electron main: shell selection/PTY spawn, telemetry, file IPC, window lifecycle
+├── preload.js                 contextBridge — the only renderer↔main surface (Electron build)
 ├── main/
 │   ├── config-store.js        atomic 0600 config writes, secrets never leave main
+│   ├── terminal-metadata.js   shell selection + spawn args, cwd tracking (OSC 7 + lsof/procfs), idle detection — shared by main.js and server/index.js
+│   ├── monitoring.js          CPU/GPU/memory/disk/network/process telemetry — macOS-only bits (GPU, ENERGY) throw cleanly elsewhere and the caller degrades
+│   ├── files-operations.js    directory listing, copy/move/rename, trash, image preview — shared by main.js and server/index.js
+│   ├── themes.js               reads custom accents from userData/themes/*.json
 │   ├── theme-file-validator.js  validates userData/themes/*.json (pure, unit-tested)
-│   ├── assistant/             provider registry, agent loop, Brave tool, CLI bridge
+│   ├── format-utils.js        shared sanitizers (safeLabel, finiteNumber, clampPercent, isIpv4)
+│   ├── assistant/             provider registry, agent loop, Brave tool, CLI bridge (Unix socket on macOS/Linux, loopback TCP on Windows)
 │   └── e2e/                   drivers behind npm run test:smoke/visual/files/panes/assistant-ui
+├── server/
+│   └── index.js               web-mode server — the same terminal/telemetry/files/assistant contract as Electron's IPC, over a WebSocket plus a small static file server; see Web mode & Docker below
 └── renderer/
     ├── renderer.js             terminal sessions, HUD controls, boot sequence, shortcuts
     ├── terminal-panes.js       split/stack/zoom layout, search, TTY rename, context menu
@@ -248,9 +303,16 @@ src/
     ├── assistant-ui.js         AI panel + settings dialog
     ├── theme.js                built-in + custom accent/colour/typeface presets, persistence
     ├── theme-ui.js             the WYGLĄD controls in SETTINGS
+    ├── platform-utils.js       ⌘-vs-Ctrl shortcut mapping and per-platform glyphs — the one place "which OS is this" lives
+    ├── osc7-cwd.js             decodes the OSC 7 file:// URI (Windows cwd tracking) into a path
+    ├── web-preload.js          web mode's stand-in for preload.js's contextBridge, over WebSocket instead
     ├── theme-tokens.css        RGB triplets every translucent surface is composed from
     └── styles.css              the entire Tron/GRID visual system
 ```
+
+`resources/bin/{ai,search}` (and their `.cmd` counterparts for Windows) and
+`resources/shell-integration/osc7-prompt.ps1` are copied into the packaged app for the CLI
+bridge and Windows cwd tracking respectively — see [Platform notes](#platform-notes) above.
 
 Tabs own a layout tree of panes, and that tree lives in the DOM: a `.terminal-split` always
 holds exactly two children — a pane or another split — so closing one collapses the split by
@@ -280,7 +342,8 @@ Prints a URL with a token on stdout — `http://127.0.0.1:3040/?token=…` — o
 Set `EDEX_WEB_TOKEN` yourself to pin it instead of getting a random one every run; `EDEX_WEB_PORT`
 (default `3040`) and `EDEX_WEB_BIND` (default `127.0.0.1`) are also overridable.
 
-**Run it in Docker** (the way to get it onto a Linux host; also works on macOS):
+**Run it in Docker** (the way to run it headless — a VPS, a container, anywhere without a
+desktop session; native Linux/Windows/macOS builds cover the desktop case, see Download above):
 
 ```bash
 EDEX_WEB_TOKEN=$(openssl rand -hex 32) docker compose up -d --build
@@ -311,24 +374,41 @@ running before `docker compose up`; Linux just needs Docker itself, no VM layer 
 
 ## Development
 
-Only needed if you want to change the code — users install the `.dmg` above.
+Only needed if you want to change the code — most people should just grab a build from
+[Download](#download) above.
 
-> **Requirements:** macOS on Apple Silicon, Node.js 22 or newer.
+> **Requirements:** Node.js 22 or newer, on macOS, Linux or Windows.
 
 ```bash
 git clone https://github.com/bkleparski/eDEX-UI-BK.git
 cd eDEX-UI-BK
-npm install      # also rebuilds node-pty for arm64
-npm start           # run from source
-npm run dist        # produce the .app, .dmg and .zip in dist/
-npm run install:app # build and replace /Applications/EBARTNET-UI.app
+npm install      # also rebuilds node-pty for this machine's own architecture
+npm start        # run from source
+npm run dist     # macOS only — produces the .app, .dmg and .zip in dist/
 ```
+
+`npm run dist` and `npm run install:app` are macOS-specific shortcuts (they hardcode
+`--mac --arm64`). Linux and Windows builds come from CI — see **Building for other platforms**
+below — or run `npx electron-builder --linux AppImage` / `--win nsis portable` yourself on a
+matching machine.
+
+### Building for other platforms
+
+`.github/workflows/build.yml` builds all four release artifacts on their own native runner:
+`macos-latest` (dmg + zip, arm64), `ubuntu-latest` (AppImage, x64), `ubuntu-24.04-arm`
+(AppImage, arm64) and `windows-latest` (portable exe, x64). It triggers on `workflow_dispatch`
+or on pushing a `v*` tag — pushing a tag is what actually ships a release.
+
+> **Don't build the Linux AppImage under QEMU emulation** (a foreign-architecture `docker run`
+> on the wrong host, say). Packaging can report success and still hand you a binary that
+> doesn't run correctly on the target. Build arm64 on real arm64 hardware — or GitHub's own
+> `ubuntu-24.04-arm` runner, which is what `build.yml` actually uses — and x64 on real x64.
 
 ### Tests
 
 ```bash
 npm run lint                  # eslint across main and renderer
-npm run test:unit             # provider, config, CLI-bridge, telemetry and theme-file tests
+npm run test:unit             # provider, config, CLI-bridge, telemetry and theme-file tests — 100 tests, pure Node, no Electron
 npm run test:smoke            # boots Electron, verifies the PTY round-trip
 npm run test:files            # file manager + theme behaviour on a temp directory
 npm run test:panes            # split, stack, navigate, resize and close panes
