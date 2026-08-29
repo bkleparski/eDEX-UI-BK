@@ -33,6 +33,7 @@ const rendererSharedGlobals = {
   activeSessionId: 'readonly',
   activeTabId: 'readonly',
   applyHudTokens: 'readonly',
+  applyPlatformShortcutGlyphs: 'readonly',
   applySelectionClasses: 'readonly',
   applyTerminalAppearance: 'readonly',
   applyTheme: 'readonly',
@@ -178,6 +179,7 @@ const rendererSharedGlobals = {
   positionTTYOverlay: 'readonly',
   positionTerminalSearchBar: 'readonly',
   presentImagePreview: 'readonly',
+  primaryModifier: 'readonly',
   processSortKey: 'readonly',
   processViewKey: 'readonly',
   pushHistory: 'readonly',
@@ -207,6 +209,7 @@ const rendererSharedGlobals = {
   runTerminalSearch: 'readonly',
   saveTheme: 'readonly',
   scheduleImagePreview: 'readonly',
+  secondaryPlatformModifier: 'readonly',
   selectableEntries: 'readonly',
   setFileDropTarget: 'readonly',
   setFileOperationStatus: 'readonly',
@@ -314,6 +317,18 @@ module.exports = [
     ignores: ['node_modules/**', 'dist/**', 'coverage/**']
   },
   js.configs.recommended,
+  {
+    files: ['src/renderer/platform-utils.js'],
+    languageOptions: {
+      sourceType: 'script',
+      ecmaVersion: 'latest',
+      globals: {
+        ...rendererEnvGlobals,
+        ...withoutOwn('applyPlatformShortcutGlyphs', 'primaryModifier', 'secondaryPlatformModifier')
+      }
+    },
+    rules: rendererRules
+  },
   {
     files: ['src/renderer/theme.js'],
     languageOptions: {

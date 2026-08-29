@@ -568,7 +568,7 @@ function initializeControls() {
   document.addEventListener('keydown', handleFileBrowserKeydown, true);
 
   document.addEventListener('keydown', (event) => {
-    if (bootActive || !event.metaKey || event.ctrlKey) return;
+    if (bootActive || !primaryModifier(event) || secondaryPlatformModifier(event)) return;
     // ⌥⌘arrows walk the pane grid of the current tab.
     if (event.altKey) {
       const direction = {
@@ -1040,6 +1040,7 @@ async function initializeTerminal() {
   await createTerminalSession();
 }
 
+applyPlatformShortcutGlyphs();
 initializeAudio();
 initializeBoot();
 initializeControls();

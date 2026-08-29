@@ -112,6 +112,19 @@
         }
       ]
     },
+    "linux": {
+      "category": "TerminalEmulator",
+      "icon": "build/icon-512.png",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
     "artifactName": "${productName}-${version}-${arch}.${ext}"
   }
 }

@@ -420,7 +420,7 @@ function handleRowSelection(row, event) {
     setFileSelection(visible.slice(start, end + 1));
     return;
   }
-  if (event.metaKey) {
+  if (primaryModifier(event)) {
     if (fileSelection.has(filePath)) fileSelection.delete(filePath);
     else fileSelection.add(filePath);
     fileSelectionAnchor = filePath;
@@ -1142,14 +1142,14 @@ function handleFileBrowserKeydown(event) {
   // ⌘F is shared with terminal search (initializeControls): only claim it here
   // when focus is actually inside FILES — otherwise fall through unhandled so
   // the terminal search shortcut gets it, matching iTerm2-style expectations.
-  if (event.metaKey && !event.altKey && !event.ctrlKey && event.code === 'KeyF') {
+  if (primaryModifier(event) && !event.altKey && !secondaryPlatformModifier(event) && event.code === 'KeyF') {
     if (!panel.contains(document.activeElement)) return;
     event.preventDefault();
     event.stopPropagation();
     openFileFilter();
     return;
   }
-  if (event.metaKey && event.shiftKey && event.code === 'KeyN') {
+  if (primaryModifier(event) && event.shiftKey && event.code === 'KeyN') {
     event.preventDefault();
     event.stopPropagation();
     const parent = currentDirectoryPath();
@@ -1164,24 +1164,24 @@ function handleFileBrowserKeydown(event) {
   if (filterFocused) return;
 
   const paths = [...fileSelection];
-  if (event.metaKey && !event.shiftKey && event.code === 'KeyA') {
+  if (primaryModifier(event) && !event.shiftKey && event.code === 'KeyA') {
     event.preventDefault();
     event.stopPropagation();
     setFileSelection(selectableEntries().map((entry) => entry.fullPath));
     return;
   }
-  if (event.metaKey && event.altKey && event.code === 'KeyC' && paths.length) {
+  if (primaryModifier(event) && event.altKey && event.code === 'KeyC' && paths.length) {
     event.preventDefault();
     copyPathsToClipboard(paths);
     return;
   }
-  if (event.metaKey && !event.altKey && event.code === 'KeyC' && paths.length) {
+  if (primaryModifier(event) && !event.altKey && event.code === 'KeyC' && paths.length) {
     event.preventDefault();
     fileClipboard = { mode: 'copy', paths };
     updateFileStatusBar();
     return;
   }
-  if (event.metaKey && event.code === 'KeyV' && fileClipboard) {
+  if (primaryModifier(event) && event.code === 'KeyV' && fileClipboard) {
     event.preventDefault();
     const destination = currentDirectoryPath();
     const payload = fileClipboard;
@@ -1190,7 +1190,7 @@ function handleFileBrowserKeydown(event) {
     return;
   }
   // ⌥⌘↑ belongs to pane navigation, so the plain ⌘↑ shortcut must not swallow it.
-  if (event.metaKey && !event.altKey && event.code === 'ArrowUp') {
+  if (primaryModifier(event) && !event.altKey && event.code === 'ArrowUp') {
     event.preventDefault();
     const parentPath = lastFileBrowserResult?.parentPath;
     if (parentPath) {

@@ -29,25 +29,12 @@ const {
   createImagePreviewCache, defaultImagePreviewEncode, previewImageFile, listDirectoryFiles, listTerminalFiles
 } = require('../main/files-operations');
 const { createMonitoringSession, collectMonitoringSample, MONITOR_INTERVAL_MS } = require('../main/monitoring');
-const { collectTerminalMetadata } = require('../main/terminal-metadata');
+const { collectTerminalMetadata, defaultShell } = require('../main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('../main/themes');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const RENDERER_ROOT = path.join(PROJECT_ROOT, 'src', 'renderer');
 const NODE_MODULES_ROOT = path.join(PROJECT_ROOT, 'node_modules');
-
-// main.js's Electron terminal always spawns `/bin/zsh -l` (that's the shell
-// on every Mac since Catalina), but this server also targets Linux
-// containers, which typically don't ship zsh — node:22-slim's node-pty
-// spawn would just fail outright with ENOENT. Prefer zsh where it exists
-// for behavioral parity with the Electron app, else fall back to whatever
-// shell the image actually has.
-function defaultShell() {
-  for (const candidate of ['/bin/zsh', '/bin/bash', '/bin/sh']) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return '/bin/sh';
-}
 
 // Bare metal (macOS/Linux) defaults to loopback-only — remote access is
 // meant to go through something in front of this (Cloudflare Tunnel, an SSH

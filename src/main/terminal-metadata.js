@@ -13,6 +13,19 @@ const { safeLabel } = require('./format-utils');
 const SLOW_COMMAND_THRESHOLD_MS = 15_000;
 const IS_LINUX = process.platform === 'linux';
 
+// The Electron main process spawns this directly on Electron 43 (that's
+// been the shell on every Mac since Catalina, so darwin never needs to look
+// further); the web server (src/server/index.js) uses this same function
+// because its Docker image (node:22-slim) doesn't ship zsh at all — without
+// a fallback, node-pty's spawn would just fail outright with ENOENT. Linux
+// desktop builds hit exactly the same gap.
+function defaultShell() {
+  for (const candidate of ['/bin/zsh', '/bin/bash', '/bin/sh']) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '/bin/sh';
+}
+
 function terminalWorkingDirectoryViaLsof(terminal) {
   return new Promise((resolve, reject) => {
     execFile('/usr/sbin/lsof', ['-a', '-p', String(terminal.pid), '-d', 'cwd', '-Fn'], {
@@ -115,6 +128,7 @@ async function collectTerminalMetadata(terminal, state, now) {
 
 module.exports = {
   SLOW_COMMAND_THRESHOLD_MS,
+  defaultShell,
   terminalWorkingDirectory,
   processIdentity,
   compactWorkingDirectory,

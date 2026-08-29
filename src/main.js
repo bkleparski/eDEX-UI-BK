@@ -19,7 +19,7 @@ const {
 } = require('./main/files-operations');
 const { safeLabel } = require('./main/format-utils');
 const { MONITOR_INTERVAL_MS, createMonitoringSession, collectMonitoringSample } = require('./main/monitoring');
-const { collectTerminalMetadata } = require('./main/terminal-metadata');
+const { collectTerminalMetadata, defaultShell } = require('./main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('./main/themes');
 
 const isSmokeTest = process.env.EDEX_SMOKE_TEST === '1';
@@ -249,7 +249,7 @@ function registerTerminalIpc() {
 
     const cols = Number.isInteger(options.cols) ? Math.min(Math.max(options.cols, 2), 500) : 80;
     const rows = Number.isInteger(options.rows) ? Math.min(Math.max(options.rows, 1), 300) : 24;
-    const shell = '/bin/zsh';
+    const shell = defaultShell();
     const assistantBinPath = app.isPackaged
       ? path.join(process.resourcesPath, 'bin')
       : path.join(__dirname, '..', 'resources', 'bin');
@@ -669,8 +669,10 @@ function createWindow() {
     fullscreen: false,
     fullscreenable: true,
     resizable: true,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 27, y: 36 },
+    // The inset traffic lights are a macOS convention (and trafficLightPosition
+    // is a no-op everywhere else anyway) — Linux gets the platform's own
+    // window chrome instead of an empty gap where the lights would be.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 27, y: 36 } } : {}),
     show: !isAutomatedTest,
     backgroundColor: '#02080a',
     webPreferences: {

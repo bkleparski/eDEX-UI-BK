@@ -4,6 +4,7 @@ out/
 build/*
 !build/icon-draft.png
 !build/icon.icns
+!build/icon-512.png
 phase*-screenshot.png
 ref-*.png
 bug-*.png

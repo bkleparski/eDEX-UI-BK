@@ -71,9 +71,13 @@ contextBridge.exposeInMainWorld('assistantApi', Object.freeze({
 // Electron has every OS-level feature — see src/renderer/web-preload.js's
 // version of this same global for what the web preview has to fall back to
 // instead (and file-browser.js for how it adapts its UI on these flags).
+// `platform` is process.platform verbatim ('darwin' | 'linux' | 'win32') —
+// src/renderer/platform-utils.js reads it to decide the primary shortcut
+// modifier (⌘ vs Ctrl) and which glyphs to show.
 contextBridge.exposeInMainWorld('edexCapabilities', Object.freeze({
   trash: true,
   reveal: true,
   openFile: true,
-  nativeDialogs: true
+  nativeDialogs: true,
+  platform: process.platform
 }));

@@ -189,11 +189,26 @@
   // features have no browser equivalent, so it can adapt its own UI instead
   // of calling an API that will just throw. src/preload.js exposes the same
   // object with every flag true — Electron's behavior never changes.
+  //
+  // `platform` is the one field that isn't about the server at all — it's
+  // about whoever is *looking at the page*, so their physical ⌘/Ctrl key
+  // matches what the HUD shows. Electron gets this from process.platform
+  // (a real Node global there); a browser tab has no such thing, so this
+  // reads navigator.platform instead — same three values platform-utils.js
+  // already expects ('darwin' | 'win32' | anything else treated as Linux).
+  function detectBrowserPlatform() {
+    const raw = `${navigator.platform || ''} ${navigator.userAgent || ''}`;
+    if (/mac/i.test(raw)) return 'darwin';
+    if (/win/i.test(raw)) return 'win32';
+    return 'linux';
+  }
+
   contextBridgeShim('edexCapabilities', Object.freeze({
     trash: false,
     reveal: false,
     openFile: false,
-    nativeDialogs: false
+    nativeDialogs: false,
+    platform: detectBrowserPlatform()
   }));
 
   // contextBridge.exposeInMainWorld isn't available outside Electron's
