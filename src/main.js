@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const url = require('node:url');
 const pty = require('node-pty');
 const { AssistantService } = require('./main/assistant/assistant-service');
 const { LMStudioProvider } = require('./main/assistant/lmstudio-provider');
@@ -70,9 +71,18 @@ function isTrustedSender(event) {
   const senderUrl = event.senderFrame?.url;
   if (typeof senderUrl !== 'string') return false;
 
-  const parsedUrl = new URL(senderUrl);
+  // fileURLToPath handles platform differences a raw pathname comparison does
+  // not: on Windows the URL pathname is /C:/... with forward slashes while
+  // path.join produces C:\... with backslashes, so the old string equality
+  // rejected every renderer there.
+  let senderPath;
+  try {
+    senderPath = url.fileURLToPath(senderUrl);
+  } catch {
+    return false;
+  }
   const expectedPath = path.join(__dirname, 'renderer', 'index.html');
-  return parsedUrl.protocol === 'file:' && decodeURIComponent(parsedUrl.pathname) === expectedPath;
+  return path.relative(senderPath, expectedPath) === '';
 }
 
 function requireTrustedSender(event) {
