@@ -1033,7 +1033,13 @@ body.system-panel-hidden.network-panel-hidden .workspace {
 }
 
 .bottom-hud__content {
-  grid-template-columns: minmax(150px, 1fr) auto minmax(340px, 1fr);
+  /* minmax(0, auto), not a bare auto — a bare auto track never shrinks
+     below its content's natural width, so on platforms whose legend text
+     runs wider than macOS's glyphs, this column would just keep growing
+     and shove .status-chips off the fixed-height row instead of yielding
+     space to it. Compact glyphs (see modifierComboText) already keep the
+     legend close to macOS width; this is the safety net if it's ever not. */
+  grid-template-columns: minmax(150px, 1fr) minmax(0, auto) minmax(340px, 1fr);
   gap: 14px;
 }
 
@@ -1048,6 +1054,8 @@ body.system-panel-hidden.network-panel-hidden .workspace {
 
 .shortcut-legend {
   justify-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 8px !important;
   letter-spacing: .08em !important;
 }

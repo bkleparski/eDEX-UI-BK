@@ -67,6 +67,26 @@ test('modifierComboText rewrites both glyph orderings and single modifiers off d
   });
 });
 
+test('modifierComboText in compact mode swaps only the Cmd glyph, same length as macOS', () => {
+  withPlatform('win32', () => {
+    assert.equal(modifierComboText('⌘1', true), '^1');
+    assert.equal(modifierComboText('⇧⌘L', true), '^⇧L');
+    assert.equal(modifierComboText('⌘⇧.', true), '^⇧.');
+    assert.equal(modifierComboText('⌘T', true), '^T');
+    // Same character count as the macOS original in every case above —
+    // that's the whole point (see the footer HUD width regression).
+    for (const [darwinText, compactText] of [['⌘1', '^1'], ['⇧⌘L', '^⇧L'], ['⌘⇧.', '^⇧.'], ['⌘T', '^T']]) {
+      assert.equal(compactText.length, darwinText.length);
+    }
+  });
+});
+
+test('modifierComboText compact mode is a no-op on darwin, same as the spelled-out form', () => {
+  withPlatform('darwin', () => {
+    assert.equal(modifierComboText('⇧⌘L', true), '⇧⌘L');
+  });
+});
+
 test('superKeyGlyph distinguishes darwin, win32 and the Linux default', () => {
   withPlatform('darwin', () => assert.equal(superKeyGlyph(), '⌘'));
   withPlatform('win32', () => assert.equal(superKeyGlyph(), 'Win'));

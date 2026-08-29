@@ -38,8 +38,22 @@ function secondaryPlatformModifier(event) {
 // Markup across index.html was written with macOS glyphs (⌘⌥⇧) baked in as
 // literal text — ⇧⌘ and ⌘⇧ both occur (footer legend vs. title attributes
 // disagree on order), so both are matched before the single-glyph passes.
-function modifierComboText(text) {
+//
+// `compact` swaps ⌘ for a single '^' instead of spelling out "Ctrl+" — same
+// character count as the macOS glyph it replaces (⌘1 -> ^1, ⇧⌘L -> ^⇧L), so
+// the footer's shortcut legend (the only place this is used) keeps the
+// exact width it already has on macOS instead of blowing out the fixed-
+// height HUD row with "Ctrl+Shift+L"-length text. Found on a real Windows
+// VM: the legend column is a `grid-template-columns: ... auto ...` track
+// that grows to fit whatever it's given, no wrap, no shrink — spelled-out
+// combos pushed the status-chip toggles clean off the row. Tooltips
+// ([title] below) keep the full spelled-out word — that's meant to be read
+// on hover, not squeezed into a fixed-width row.
+function modifierComboText(text, compact = false) {
   if (isDarwinPlatform()) return text;
+  if (compact) {
+    return text.replace(/⇧⌘|⌘⇧/g, '^⇧').replace(/⌘/g, '^');
+  }
   return text
     .replace(/⇧⌘|⌘⇧/g, 'Ctrl+Shift+')
     .replace(/⌘/g, 'Ctrl+')
@@ -63,7 +77,9 @@ function superKeyGlyph() {
 function applyPlatformShortcutGlyphs(root = document) {
   if (isDarwinPlatform()) return;
   root.querySelectorAll('kbd').forEach((node) => {
-    node.textContent = modifierComboText(node.textContent);
+    // Every <kbd> in the markup lives in the footer's shortcut legend —
+    // compact form only, see modifierComboText's comment above.
+    node.textContent = modifierComboText(node.textContent, true);
   });
   root.querySelectorAll('[title]').forEach((node) => {
     const title = node.getAttribute('title');

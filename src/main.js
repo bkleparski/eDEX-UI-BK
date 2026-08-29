@@ -438,7 +438,8 @@ function registerFilesIpc() {
       if (!terminal) {
         return { status: 'error', sessionId, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false };
       }
-      result = await listTerminalFiles(terminal, sessionId, showHidden);
+      const trackedCwd = terminalMetadataSessions.get(event.sender.id)?.states.get(sessionId)?.cwd;
+      result = await listTerminalFiles(terminal, sessionId, showHidden, trackedCwd);
     }
     // Keep the watcher pointed at whatever directory this call just
     // resolved — swaps it when the caller has moved elsewhere, and reports

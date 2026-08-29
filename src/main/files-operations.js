@@ -13,9 +13,9 @@
 // never pass a raw, unvalidated string into fs.* themselves.
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { safeLabel, finiteNumber } = require('./format-utils');
-const { terminalWorkingDirectory } = require('./terminal-metadata');
 
 const MAX_FILE_ENTRIES = 80;
 const MAX_BATCH_ENTRIES = 200;
@@ -274,9 +274,21 @@ async function listDirectoryFiles(cwd, sessionId, showHidden = false) {
   }
 }
 
-async function listTerminalFiles(terminal, sessionId, showHidden = false) {
+// `trackedCwd` is whatever the terminal-metadata poll already knows for
+// this session (see main.js/server's files:list handlers) — the same value
+// feeding the tab label, OSC 7 included. Reusing it instead of re-deriving
+// cwd here independently is what lets an OSC 7 report (win32's only cwd
+// source) reach the file panel at all; falling straight to a fresh
+// terminalWorkingDirectory() call would just be null again on win32, every
+// time, regardless of what OSC 7 had already reported. os.homedir() is the
+// last resort — a session that hasn't reported anything yet (panel opened
+// before the first prompt, or a cmd.exe session that never will) still
+// needs *some* real directory to list; unlike the tab label, this can't
+// just fall back to displaying text instead.
+async function listTerminalFiles(terminal, sessionId, showHidden = false, trackedCwd = null) {
   try {
-    return listDirectoryFiles(await terminalWorkingDirectory(terminal), sessionId, showHidden);
+    const cwd = (typeof trackedCwd === 'string' && trackedCwd) || os.homedir();
+    return listDirectoryFiles(cwd, sessionId, showHidden);
   } catch {
     return {
       status: 'error',

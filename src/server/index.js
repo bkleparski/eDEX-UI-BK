@@ -380,7 +380,7 @@ async function handleFilesList(state, [sessionId, directoryPath, showHidden]) {
     if (!terminal) {
       return { status: 'error', sessionId: id, cwd: null, parentPath: null, entries: [], totalCount: 0, truncated: false, watching: false };
     }
-    result = await listTerminalFiles(terminal, id, hidden);
+    result = await listTerminalFiles(terminal, id, hidden, state.metadataStates.get(id)?.cwd);
   }
   result.watching = result.status === 'ok' ? ensureFileWatcher(state, result.cwd) : false;
   return result;
