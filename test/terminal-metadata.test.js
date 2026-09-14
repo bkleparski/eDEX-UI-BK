@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  defaultShell, shellDisplayName, shellSpawnArgs, win32ShellArgs, processIdentity, terminalWorkingDirectory,
+  defaultShell, defaultStartupCwd, shellDisplayName, shellSpawnArgs, win32ShellArgs, processIdentity,
+  terminalWorkingDirectory,
   collectTerminalMetadata, sanitizeReportedCwd, reportTerminalCwd
 } = require('../src/main/terminal-metadata');
 
@@ -245,4 +246,28 @@ test('collectTerminalMetadata on win32 falls back to the shell name, not the ter
   const result = await collectTerminalMetadata(terminal, state, 1000, 'win32');
   assert.equal(result.label, 'powershell');
   assert.notEqual(result.label, 'xterm-256color');
+});
+
+test('defaultStartupCwd opens new panes in ~/Projekty when that directory exists', () => {
+  const home = makeTempDir();
+  fs.mkdirSync(path.join(home, 'Projekty'));
+  withEnv({ EBARTNET_UI_CWD: undefined }, () => {
+    assert.equal(defaultStartupCwd(home), path.join(home, 'Projekty'));
+  });
+});
+
+test('defaultStartupCwd lets EBARTNET_UI_CWD override the ~/Projekty default', () => {
+  const home = makeTempDir();
+  fs.mkdirSync(path.join(home, 'Projekty'));
+  const override = makeTempDir();
+  withEnv({ EBARTNET_UI_CWD: override }, () => {
+    assert.equal(defaultStartupCwd(home), override);
+  });
+});
+
+test('defaultStartupCwd falls back to the home directory when no candidate is a real directory', () => {
+  const home = makeTempDir();
+  withEnv({ EBARTNET_UI_CWD: path.join(home, 'does-not-exist') }, () => {
+    assert.equal(defaultStartupCwd(home), home);
+  });
 });

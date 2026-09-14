@@ -21,7 +21,8 @@ const {
 const { safeLabel } = require('./main/format-utils');
 const { MONITOR_INTERVAL_MS, createMonitoringSession, collectMonitoringSample } = require('./main/monitoring');
 const {
-  collectTerminalMetadata, defaultShell, shellDisplayName, shellSpawnArgs, win32ShellArgs, reportTerminalCwd
+  collectTerminalMetadata, defaultShell, defaultStartupCwd, shellDisplayName, shellSpawnArgs, win32ShellArgs,
+  reportTerminalCwd
 } = require('./main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('./main/themes');
 
@@ -266,11 +267,12 @@ function registerTerminalIpc() {
     const assistantBinPath = path.join(resourcesRoot, 'bin');
     const osc7ScriptPath = path.join(resourcesRoot, 'shell-integration', 'osc7-prompt.ps1');
     const spawnArgs = process.platform === 'win32' ? win32ShellArgs(shell, osc7ScriptPath) : shellSpawnArgs();
+    const startupCwd = defaultStartupCwd();
     const terminal = pty.spawn(shell, spawnArgs, {
       name: 'xterm-256color',
       cols,
       rows,
-      cwd: os.homedir(),
+      cwd: startupCwd,
       env: {
         ...process.env,
         SHELL: shell,
@@ -282,7 +284,7 @@ function registerTerminalIpc() {
 
     clientTerminals.set(sessionId, terminal);
     ensureTerminalMetadataSession(event.sender, sessionId).states.set(sessionId, {
-      cwd: os.homedir(), cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null, shellPath: shell
+      cwd: startupCwd, cwdSource: null, cwdCheckedAt: 0, commandStartedAt: null, commandName: null, shellPath: shell
     });
 
     terminal.onData((data) => {

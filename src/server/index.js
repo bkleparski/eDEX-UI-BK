@@ -29,7 +29,7 @@ const {
   createImagePreviewCache, defaultImagePreviewEncode, previewImageFile, listDirectoryFiles, listTerminalFiles
 } = require('../main/files-operations');
 const { createMonitoringSession, collectMonitoringSample, MONITOR_INTERVAL_MS } = require('../main/monitoring');
-const { collectTerminalMetadata, defaultShell, shellDisplayName, shellSpawnArgs, reportTerminalCwd } = require('../main/terminal-metadata');
+const { collectTerminalMetadata, defaultShell, defaultStartupCwd, shellDisplayName, shellSpawnArgs, reportTerminalCwd } = require('../main/terminal-metadata');
 const { ensureThemesDirectory, readCustomThemes } = require('../main/themes');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
@@ -472,7 +472,7 @@ async function handleTerminalStart(state, args) {
     name: 'xterm-256color',
     cols,
     rows,
-    cwd: os.homedir(),
+    cwd: defaultStartupCwd(),
     env: { ...process.env, SHELL, TERM: 'xterm-256color', COLORTERM: 'truecolor' }
   });
 

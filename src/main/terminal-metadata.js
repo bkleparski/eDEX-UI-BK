@@ -252,9 +252,26 @@ async function collectTerminalMetadata(terminal, state, now, platform = process.
   };
 }
 
+// Startup directory for a fresh pane: EBARTNET_UI_CWD if it points at a real
+// directory, otherwise ~/Projekty (where the work actually lives), with the
+// home directory as the last resort so a pane always opens somewhere valid.
+function defaultStartupCwd(homedir = os.homedir()) {
+  const candidates = [process.env.EBARTNET_UI_CWD, path.join(homedir, 'Projekty')];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      if (fs.statSync(candidate).isDirectory()) return candidate;
+    } catch {
+      // Not a usable directory - fall through to the next candidate.
+    }
+  }
+  return homedir;
+}
+
 module.exports = {
   SLOW_COMMAND_THRESHOLD_MS,
   defaultShell,
+  defaultStartupCwd,
   shellDisplayName,
   shellSpawnArgs,
   win32ShellArgs,
