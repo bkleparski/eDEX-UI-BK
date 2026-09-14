@@ -181,9 +181,22 @@ function runVisualTest(window, context) {
           if (document.body.dataset.soundEnabled === 'true') press('KeyS', true);
           press('KeyS', true);
           press('KeyS', true);
-          const waitFor = (condition, action, attempt = 0) => {
+          // Every waitFor on the top level of this sequence starts polling at
+          // the same instant, even though the steps are logically a cascade:
+          // one step's action is what makes the next step's condition true. So
+          // a late step's budget is really total elapsed time, not time that
+          // step spent waiting. Measured: the CWD step below only becomes true
+          // at ~12s, while a flat 40 x 250ms budget expires at ~10s. That is
+          // the whole story behind this test's long-running flake — as the
+          // earlier steps grew, the last one's remaining slice shrank until it
+          // stopped fitting at all. maxAttempts lets a step that waits on
+          // something inherently slow say so, instead of every step sharing
+          // one number sized for the worst case.
+          const waitFor = (condition, action, attempt = 0, maxAttempts = 40) => {
             if (condition()) action();
-            else if (attempt < 40) setTimeout(() => waitFor(condition, action, attempt + 1), 250);
+            else if (attempt < maxAttempts) {
+              setTimeout(() => waitFor(condition, action, attempt + 1, maxAttempts), 250);
+            }
           };
           waitFor(
             () => document.querySelector('#ttyTabs .tty-tab.is-active')?.dataset.sessionId === 'tty-02'
@@ -325,6 +338,13 @@ function runVisualTest(window, context) {
               }, 750);
             }
           );
+          // 160 attempts (~40s) instead of the default 40: this step waits for
+          // the FILE SYSTEM panel to notice the directory change sent just
+          // above, and in live mode that CWD is discovered by polling lsof on a
+          // cadence of its own — it cannot resolve faster than roughly a second
+          // after the shell goes idle again. Measured end to end it lands at
+          // ~12s, past the shared 10s budget, which is exactly why this step
+          // and every assertion nested under it used to fail.
           waitFor(
             () => document.body.dataset.fileBrowserMode === 'live'
               && document.getElementById('fileBrowserCwd').title === ${JSON.stringify(visualBrowserRoot)}
@@ -485,7 +505,7 @@ function runVisualTest(window, context) {
                 }
               );
             }
-          );
+          , 0, 160);
           // Re-enters drag-hover (dragenter+dragover, no drop) without ever
           // firing dragleave/drop/dragend afterwards — this is the second,
           // independent thing (besides the TTY chain) diagnostics needs to
@@ -494,10 +514,22 @@ function runVisualTest(window, context) {
           // marks that so waitForRendererCondition can wait for both signals
           // instead of just outrunning this fixed-delay step (see its call
           // site below).
-          setTimeout(() => {
-            dispatchTestFileDrag(false);
-            document.body.dataset.finalDragRearmed = 'true';
-          }, 10_500);
+          //
+          // Gated on ttyFinalMenuReady — the TTY chain's very last statement —
+          // rather than a fixed delay. It has to be genuinely last: the panel
+          // drop and image-preview steps nested in that chain each end with a
+          // dragleave/drop, which clears the very indicator this step arms. On
+          // a 10.5s timer it silently stopped being last once the chain grew
+          // past that (the CWD step alone lands at ~12s), so the indicator was
+          // armed mid-sequence and then wiped before diagnostics read it —
+          // dropIndicatorVisible came back false with nothing else wrong.
+          waitFor(
+            () => document.body.dataset.ttyFinalMenuReady === 'true',
+            () => {
+              dispatchTestFileDrag(false);
+              document.body.dataset.finalDragRearmed = 'true';
+            }
+          , 0, 160);
         })()`).catch((error) => console.error(`Visual shortcut setup failed: ${error.message}`));
       }, 2_000);
 
