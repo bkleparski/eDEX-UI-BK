@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } = require('electron');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -59,6 +59,15 @@ let gracefulShutdownStarted = false;
 
 const TERMINAL_METADATA_INTERVAL_MS = 500;
 const MAX_TERMINALS_PER_WINDOW = 8;
+// Mirror of MAX_TEXT_BYTES in src/renderer/osc52-clipboard.js, re-checked on
+// this side of the bridge because the payload came out of terminal output.
+const CLIPBOARD_MAX_TEXT_LENGTH = 1024 * 1024;
+// What the smoke test's OSC 52 sequence carries; the renderer emits the
+// matching escape (see initializeTerminal). The user's real clipboard is
+// saved before the run and put back when it finishes — a test has no
+// business leaving its marker sitting in someone's paste buffer.
+const SMOKE_CLIPBOARD_MARKER = 'EDEX_OSC52_OK';
+let smokeClipboardBackup = '';
 const THEMES_DIR_NAME = 'themes';
 const IMAGE_PREVIEW_MAX_SOURCE_DIMENSION = 480;
 const imagePreviewCache = createImagePreviewCache();
@@ -354,13 +363,40 @@ function registerTerminalIpc() {
     if (state) reportTerminalCwd(state, payload?.cwd);
   });
 
+  // OSC 52 clipboard writes (see osc52-clipboard.js). The renderer decoded
+  // and sanitised the payload, but it still originated in terminal output —
+  // possibly several ssh hops away — so the size cap is re-applied here
+  // rather than trusted. Goes through main because Electron's clipboard
+  // needs no user gesture, unlike navigator.clipboard in the renderer, and
+  // an OSC sequence never arrives during one.
+  ipcMain.handle('clipboard:write', (event, payload = {}) => {
+    requireTrustedSender(event);
+    const text = payload?.text;
+    if (typeof text !== 'string' || text.length === 0 || text.length > CLIPBOARD_MAX_TEXT_LENGTH) {
+      return { status: 'rejected' };
+    }
+    clipboard.writeText(text);
+    return { status: 'ok', bytes: Buffer.byteLength(text, 'utf8') };
+  });
+
   ipcMain.on('terminal:smoke-result', (event, result) => {
     if (!isSmokeTest) return;
     requireTrustedSender(event);
     clearTimeout(smokeTimeout);
-    process.exitCode = result?.ok === true ? 0 : 1;
-    if (result?.ok === true) {
+    // The OSC 52 leg is checked here rather than in the renderer because the
+    // renderer can only see that its IPC call resolved — whether the bytes
+    // actually reached the OS clipboard is only observable on this side.
+    const clipboardOk = clipboard.readText() === SMOKE_CLIPBOARD_MARKER;
+    // An empty backup means there was no text to begin with — clear rather
+    // than leaving an empty string sitting there as the clipboard's contents.
+    if (smokeClipboardBackup) clipboard.writeText(smokeClipboardBackup);
+    else clipboard.clear();
+    process.exitCode = result?.ok === true && clipboardOk ? 0 : 1;
+    if (result?.ok === true && clipboardOk) {
       console.log('PTY smoke test passed: xterm renderer received output from /bin/zsh through node-pty.');
+      console.log('OSC 52 smoke test passed: a clipboard escape from the pty reached the system clipboard.');
+    } else if (result?.ok === true) {
+      console.error('OSC 52 smoke test failed: the clipboard escape never reached the system clipboard.');
     } else {
       console.error('PTY smoke test failed.');
     }
@@ -718,6 +754,7 @@ function createWindow() {
   );
 
   if (isSmokeTest) {
+    smokeClipboardBackup = clipboard.readText();
     smokeTimeout = require('./main/e2e/smoke-test').scheduleSmokeTimeout();
   }
 

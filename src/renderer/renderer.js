@@ -2,16 +2,17 @@
 
 /* exported
   activeSessionId, activeTabId, applyTerminalAppearance, audioContext, bootActive, bootTimer,
-  clearFileDropTarget, createTerminalSession, createTerminalTab, dropTestMarker, dropTestMime,
+  SMOKE_CLIPBOARD_BASE64, clearFileDropTarget, clipboardToastTimer, clipboardWriteCount, createTerminalSession,
+  createTerminalTab, dropTestMarker, dropTestMime,
   dropTestOutput, droppedFilePaths, ensureAudioContext, fileDragDepth, finishBoot,
   fitActiveTerminal, fitSession, focusTerminal, handleBootClick, handleBootInput,
-  handleCommandCompleted, handleTerminalExit, hasFileDrag, initializeAudio, initializeBoot,
+  handleCommandCompleted, handleOsc52Clipboard, handleTerminalExit, hasFileDrag, initializeAudio, initializeBoot,
   initializeControls, initializeFileDrop, initializeTerminal, insertDroppedPaths,
   internalFilePathMime, isSmokeTest, isTypingInForeignInput, isVisualTest, loadWebglAddon,
   maxTerminalSessions, nextSessionNumber, nextTabNumber, paneResizeObserver,
   panelDropTestMarker, playCommandCompleteSound, playInputSound, readSetting,
-  recordSystemVisibilityState, removeBootListeners, removeTerminalTab, rendererShuttingDown,
-  setFileDropTarget, setSystemGroupVisible, smokeCompleted, smokeMarker, smokeOutput,
+  recordSystemVisibilityState, removeBootListeners, removeTerminalTab, rendererShuttingDown, runSmokeClipboardCheck,
+  setFileDropTarget, setSystemGroupVisible, showClipboardToast, smokeCompleted, smokeMarker, smokeOutput,
   soundEnabled, storageKeys, switchTerminalSession, switchTerminalTab, tabSessions,
   terminalFitFrame, terminalFocusRequested, terminalSessions, terminalTabs, terminalTheme,
   testMode, themedTerminalPalette, toggleScanlines, toggleSound, toggleSystemGroup,
@@ -25,6 +26,9 @@ const storageKeys = Object.freeze({
   sound: 'edex-ui-bk.sound',
   keyboard: 'edex-ui-bk.keyboard'
 });
+
+// How long the OSC 52 clipboard toast stays up in the terminal heading.
+const CLIPBOARD_TOAST_MS = 2_600;
 
 const terminalTheme = Object.freeze({
   background: '#02080a',
@@ -890,6 +894,76 @@ function loadWebglAddon(session) {
   }
 }
 
+// A clipboard write from OSC 52 happens with no user gesture behind it and
+// leaves no trace on screen — the whole point is that a yank two ssh hops
+// away just silently works. Flashing the byte count in the terminal heading
+// is the cheap version of "you can see when a remote host touched your
+// clipboard", and it doubles as the only feedback when a write is refused.
+let clipboardToastTimer = null;
+// Bumped on every successful write — the smoke test polls it to tell "the
+// escape round-tripped" apart from "nothing happened yet".
+let clipboardWriteCount = 0;
+
+function showClipboardToast(message, tone = 'ok') {
+  const toast = document.getElementById('clipboardToast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.dataset.tone = tone;
+  toast.hidden = false;
+  clearTimeout(clipboardToastTimer);
+  clipboardToastTimer = setTimeout(() => {
+    toast.hidden = true;
+  }, CLIPBOARD_TOAST_MS);
+}
+
+async function handleOsc52Clipboard(data) {
+  const parsed = parseOsc52Clipboard(data);
+  if (!parsed) return;
+  if (parsed.kind === 'read') {
+    // Refused on purpose — see osc52-clipboard.js. Said out loud rather than
+    // dropped, because from the remote program's side this looks like a hang.
+    showClipboardToast('ODCZYT SCHOWKA ODRZUCONY', 'warn');
+    return;
+  }
+  if (window.themeApi?.get().clipboardWrite === false) {
+    showClipboardToast('SCHOWEK OSC 52 WYŁĄCZONY', 'warn');
+    return;
+  }
+
+  const result = await window.clipboardApi?.write(parsed.text);
+  if (result?.status === 'ok') {
+    clipboardWriteCount += 1;
+    showClipboardToast(`SCHOWEK ← ${result.bytes} B`);
+  }
+  else if (result?.status === 'blocked') showClipboardToast('SCHOWEK ZABLOKOWANY PRZEZ PRZEGLĄDARKĘ', 'warn');
+  else showClipboardToast('ZAPIS DO SCHOWKA ODRZUCONY', 'warn');
+}
+
+// Second leg of the smoke test: have the shell emit a real OSC 52 sequence
+// down the pty and wait for it to come back out the other end as a clipboard
+// write. Everything in between — xterm's OSC parser, the handler above, the
+// IPC hop — is exercised for real; main then checks whether the bytes landed
+// on the actual system clipboard (see terminal:smoke-result).
+const SMOKE_CLIPBOARD_BASE64 = 'RURFWF9PU0M1Ml9PSw=='; // "EDEX_OSC52_OK"
+
+function runSmokeClipboardCheck(sessionId) {
+  const before = clipboardWriteCount;
+  window.terminalApi.write(sessionId, `printf '\\033]52;c;${SMOKE_CLIPBOARD_BASE64}\\a'\r`);
+  const deadline = Date.now() + 5_000;
+  const poll = () => {
+    if (clipboardWriteCount > before) {
+      window.terminalApi.reportSmokeResult(true);
+      return;
+    }
+    if (Date.now() > deadline) {
+      window.terminalApi.reportSmokeResult(false);
+      return;
+    }
+    setTimeout(poll, 100);
+  };
+  poll();
+}
+
 async function createTerminalSession({ tabId = null, splitFrom = null, direction = 'row' } = {}) {
   if (terminalSessions.size >= maxTerminalSessions) {
     terminalSessions.get(activeSessionId)?.terminal.write(`\r\n[TTY LIMIT: ${maxTerminalSessions}]\r\n`);
@@ -939,6 +1013,17 @@ async function createTerminalSession({ tabId = null, splitFrom = null, direction
   terminal.parser.registerOscHandler(7, (data) => {
     const cwd = parseOsc7Cwd(data);
     if (cwd) window.terminalApi.reportCwd(sessionId, cwd);
+    return true;
+  });
+
+  // OSC 52 (ESC ]52;c;<base64> BEL) — the clipboard path that survives being
+  // nested inside ssh, because the escape travels back over the pty to
+  // whichever emulator is actually drawing the screen. Terminal.app ignores
+  // it entirely, which is what sent this feature request here in the first
+  // place. Returning true claims the sequence either way, so a refused read
+  // query never falls through to some other handler.
+  terminal.parser.registerOscHandler(52, (data) => {
+    handleOsc52Clipboard(data);
     return true;
   });
 
@@ -1033,7 +1118,7 @@ async function initializeTerminal() {
       smokeOutput += data;
       if (smokeOutput.includes(smokeMarker)) {
         smokeCompleted = true;
-        window.terminalApi.reportSmokeResult(true);
+        runSmokeClipboardCheck(sessionId);
       }
     }
   });

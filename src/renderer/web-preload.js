@@ -124,6 +124,25 @@
     reportSmokeResult: (ok) => send('terminalApi', 'reportSmokeResult', [ok === true])
   }));
 
+  // The one API that deliberately does NOT cross the socket. The server may
+  // be a container on another machine entirely — the clipboard that matters
+  // is the one belonging to whoever is looking at the page. navigator's
+  // version can refuse (no transient activation, permission denied, no
+  // secure context), and OSC 52 never arrives during a user gesture, so a
+  // rejection is reported rather than swallowed: renderer.js turns it into a
+  // "SCHOWEK ZABLOKOWANY" HUD toast instead of silently losing the yank.
+  contextBridgeShim('clipboardApi', Object.freeze({
+    write: async (text) => {
+      if (typeof text !== 'string' || text.length === 0) return { status: 'rejected' };
+      try {
+        await navigator.clipboard.writeText(text);
+        return { status: 'ok', bytes: new TextEncoder().encode(text).length };
+      } catch {
+        return { status: 'blocked' };
+      }
+    }
+  }));
+
   contextBridgeShim('monitoringApi', Object.freeze({
     start: () => invoke('monitoringApi', 'start', []),
     stop: () => send('monitoringApi', 'stop', []),

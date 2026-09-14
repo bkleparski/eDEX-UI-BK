@@ -215,6 +215,8 @@
             <h1 class="hud-title" id="terminalPanelTitle">COMMAND GRID</h1>
             <div class="tty-tabs" id="ttyTabs" role="tablist" aria-label="Sesje terminala"></div>
             <span class="hud-label" id="terminalShellLabel">INTERACTIVE ZSH</span>
+            <span class="hud-label clipboard-toast" id="clipboardToast" role="status"
+              aria-live="polite" data-tone="ok" hidden></span>
           </div>
           <div class="terminal-surface boot-content boot-content--terminal">
             <div class="terminal-sessions" id="terminalSessions"></div>
@@ -541,6 +543,21 @@
             </div>
           </section>
           <section class="settings-section">
+            <h3 class="hud-label">SCHOWEK</h3>
+            <div class="theme-grid">
+              <label class="field-label hud-label" for="clipboardWriteToggle">ZAPIS PRZEZ OSC 52</label>
+              <div class="theme-sizes" id="clipboardWriteGroup" role="radiogroup"
+                aria-label="Zapis do schowka przez sekwencje OSC 52">
+                <button class="theme-size" id="clipboardWriteToggle" type="button" role="radio"
+                  data-theme-value="on" aria-checked="true">WŁ</button>
+                <button class="theme-size" type="button" role="radio"
+                  data-theme-value="off" aria-checked="false">WYŁ</button>
+              </div>
+            </div>
+            <p class="theme-note settings-hint hud-label">PROGRAMY W TERMINALU (TAKŻE PRZEZ SSH) MOGĄ PISAĆ DO SCHOWKA MACA.
+              ODCZYT SCHOWKA JEST ZAWSZE ZABLOKOWANY.</p>
+          </section>
+          <section class="settings-section">
             <h3 class="hud-label">LOCAL INFERENCE</h3>
             <div class="settings-grid">
               <label class="field-label hud-label" for="localProvider">DEFAULT PROVIDER</label>
@@ -616,6 +633,7 @@
 
     <script src="platform-utils.js"></script>
     <script src="osc7-cwd.js"></script>
+    <script src="osc52-clipboard.js"></script>
     <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="../../node_modules/@xterm/addon-search/lib/addon-search.js"></script>

@@ -9,7 +9,8 @@
 
   const elements = Object.fromEntries([
     'themeAccents', 'themeTerminalColors', 'themeFont', 'themeFontSize',
-    'themePreview', 'themePreviewText', 'themeNote', 'themeReset', 'scrollbackSize'
+    'themePreview', 'themePreviewText', 'themeNote', 'themeReset', 'scrollbackSize',
+    'clipboardWriteGroup'
   ].map((id) => [id, document.getElementById(id)]));
 
   if (!elements.themeAccents) return;
@@ -104,6 +105,10 @@
     for (const button of elements.scrollbackSize.querySelectorAll('.theme-size')) {
       button.setAttribute('aria-checked', String(Number(button.dataset.themeValue) === theme.terminalScrollback));
     }
+    // Markup, not generated — two fixed states rather than a list from themeApi.
+    for (const button of elements.clipboardWriteGroup.querySelectorAll('.theme-size')) {
+      button.setAttribute('aria-checked', String((button.dataset.themeValue === 'on') === (theme.clipboardWrite !== false)));
+    }
     elements.themeFont.value = theme.terminalFont;
 
     elements.themePreviewText.textContent = PREVIEW_LINES;
@@ -128,6 +133,7 @@
   handleGroupClick(elements.themeTerminalColors, 'terminalColor');
   handleGroupClick(elements.themeFontSize, 'terminalFontSize', Number);
   handleGroupClick(elements.scrollbackSize, 'terminalScrollback', Number);
+  handleGroupClick(elements.clipboardWriteGroup, 'clipboardWrite', (value) => value === 'on');
 
   elements.themeFont.addEventListener('change', () => {
     themeApi.set({ terminalFont: elements.themeFont.value });

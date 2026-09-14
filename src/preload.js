@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld('terminalApi', Object.freeze({
   reportSmokeResult: (ok) => ipcRenderer.send('terminal:smoke-result', { ok: ok === true })
 }));
 
+// OSC 52 writes go through main rather than navigator.clipboard: the browser
+// API needs transient user activation, and an escape sequence arriving from
+// the pty is by definition not one. See src/renderer/osc52-clipboard.js.
+contextBridge.exposeInMainWorld('clipboardApi', Object.freeze({
+  write: (text) => ipcRenderer.invoke('clipboard:write', { text })
+}));
+
 contextBridge.exposeInMainWorld('monitoringApi', Object.freeze({
   start: () => ipcRenderer.invoke('monitoring:start'),
   stop: () => ipcRenderer.send('monitoring:stop'),

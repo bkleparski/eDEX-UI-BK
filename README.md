@@ -68,6 +68,8 @@ and *Tron: Legacy*; none of the original source was copied.
 - Drag files from Finder or the built-in browser straight into the prompt — paths are shell-quoted for you
 - Search the scrollback like iTerm2 (`⌘F`) — match counter, `⏎`/`⇧⏎` to step through, `Esc` to close
 - Clickable URLs open in your default browser; WebGL-accelerated rendering with a silent canvas fallback
+- **OSC 52 clipboard** — a yank inside `vim`/`tmux` on a remote box lands on *your* clipboard, however
+  many `ssh` hops deep it happened (Terminal.app has no such thing). Clipboard *reads* are always refused
 - `⌘K` clears the active pane's scrollback; a HUD dialog warns before a multi-line paste actually lands
 - Scrollback depth is configurable in `SETTINGS` (1K–100K lines), applied live
 - A background pane's tab/chip lights up once a command running ≥15s finishes, with an optional chime (macOS/Linux — see [Platform notes](#platform-notes) for why Windows can't)
@@ -170,6 +172,22 @@ the process it is running. Click a chip to focus that pane, right-click it to re
 that pane alone. A pane that just finished a command running ≥15s lights up its chip (and tab,
 if it's not the focused pane) with a small dot — with an optional two-tone chime if keystroke
 sounds are on — so you notice a long build finishing in a pane you're not watching.
+
+**Clipboard over OSC 52.** Programs running in the terminal can put text on the system clipboard by
+emitting `ESC ]52;c;<base64> BEL`, which is what makes `y` in a remote `vim` or a `tmux` copy-mode
+selection work at all when the shell is several `ssh` hops away: the escape travels back over the pty
+to whatever is actually drawing the screen. Each write flashes a `SCHOWEK ← n B` receipt in the
+terminal heading, so a remote host can never touch your clipboard invisibly, and `SETTINGS → SCHOWEK`
+turns the whole thing off.
+
+The query form (`ESC ]52;c;?`, where the remote side asks to *read* your clipboard) is refused
+unconditionally and is not configurable — answering it would hand the contents of your paste buffer to
+whatever asked. Payloads are capped at 1 MiB and stripped of control characters, so a clipboard entry
+can't smuggle escape sequences into some other terminal you paste it into later.
+
+For this to fire, the remote program has to know the terminal supports it: `tmux` needs
+`set -g set-clipboard on`, and Neovim wants `vim.o.clipboard = 'unnamedplus'` with an OSC 52 provider
+(built in since 0.10).
 
 The search bar (`⌘F`) sits over the active pane with a live match counter; `⏎`/`⇧⏎` step to the
 next/previous hit and `Esc` closes it and returns focus to the shell. A dialog also intercepts

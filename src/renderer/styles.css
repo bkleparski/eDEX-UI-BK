@@ -3677,3 +3677,47 @@ body.files-resizing {
     grid-column: 1;
   }
 }
+
+/* OSC 52: clipboard write receipt in the terminal heading.
+   Two-class selectors scoped under .terminal-heading, because the generic
+   `.terminal-heading .hud-label` sizing layer higher up in this file would
+   otherwise win on specificity regardless of position (see the note in the
+   project doc — this exact trap has bitten three times). */
+.terminal-heading .clipboard-toast {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid rgb(var(--cyan-rgb) / .55);
+  border-radius: 2px;
+  background: rgb(var(--cyan-rgb) / .12);
+  color: var(--cyan-bright);
+  font-size: 9px;
+  letter-spacing: .14em;
+  white-space: nowrap;
+  text-shadow: 0 0 6px rgb(var(--cyan-rgb) / .6);
+  animation: clipboard-toast-in 160ms ease-out;
+}
+
+.terminal-heading .clipboard-toast[data-tone='warn'] {
+  border-color: rgb(255 159 28 / .7);
+  background: rgb(255 159 28 / .12);
+  color: #ffc46b;
+  text-shadow: 0 0 6px rgb(255 159 28 / .5);
+}
+
+@keyframes clipboard-toast-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-heading .clipboard-toast {
+    animation: none;
+  }
+}
+
+/* The OSC 52 explainer is a paragraph, not the inline span .theme-note was
+   written for, so it needs its own margins; two classes to clear .hud-label. */
+.theme-note.settings-hint {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}

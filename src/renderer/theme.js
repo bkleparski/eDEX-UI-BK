@@ -128,7 +128,12 @@ const DEFAULT_THEME = Object.freeze({
   terminalColor: 'cyan',
   terminalFont: 'neon',
   terminalFontSize: 12,
-  terminalScrollback: 10_000
+  terminalScrollback: 10_000,
+  // OSC 52: let programs inside the terminal (including ones on the far side
+  // of an ssh hop) write to the local clipboard. On by default — that's the
+  // whole reason the handler exists — but a kill switch is worth having,
+  // since the sender can be a host you don't control. See osc52-clipboard.js.
+  clipboardWrite: true
 });
 
 // Populated asynchronously by loadCustomThemes() below. accentById/
@@ -176,7 +181,8 @@ function normalizeTheme(value) {
       : DEFAULT_THEME.terminalColor,
     terminalFont: terminalFontById(source.terminalFont).id,
     terminalFontSize: FONT_SIZES.includes(size) ? size : DEFAULT_THEME.terminalFontSize,
-    terminalScrollback: SCROLLBACK_SIZES.includes(scrollback) ? scrollback : DEFAULT_THEME.terminalScrollback
+    terminalScrollback: SCROLLBACK_SIZES.includes(scrollback) ? scrollback : DEFAULT_THEME.terminalScrollback,
+    clipboardWrite: source.clipboardWrite !== false
   };
 }
 

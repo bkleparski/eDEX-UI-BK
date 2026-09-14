@@ -172,6 +172,7 @@ const rendererSharedGlobals = {
   paneZoomPath: 'readonly',
   panelDropTestMarker: 'readonly',
   parseOsc7Cwd: 'readonly',
+  parseOsc52Clipboard: 'readonly',
   pasteWarningSessionId: 'readonly',
   pasteWarningText: 'readonly',
   playCommandCompleteSound: 'readonly',
@@ -338,6 +339,18 @@ module.exports = [
       globals: {
         ...rendererEnvGlobals,
         ...withoutOwn('parseOsc7Cwd')
+      }
+    },
+    rules: rendererRules
+  },
+  {
+    files: ['src/renderer/osc52-clipboard.js'],
+    languageOptions: {
+      sourceType: 'script',
+      ecmaVersion: 'latest',
+      globals: {
+        ...rendererEnvGlobals,
+        ...withoutOwn('parseOsc52Clipboard')
       }
     },
     rules: rendererRules
