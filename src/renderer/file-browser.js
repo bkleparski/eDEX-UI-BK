@@ -1162,6 +1162,12 @@ function handleFileBrowserKeydown(event) {
     return;
   }
   if (filterFocused) return;
+  // Everything below acts on the selection (trash, open, copy/paste,
+  // select-all, navigation). The selection outlives a click back into the
+  // terminal, so these only fire while focus is actually inside FILES —
+  // otherwise Backspace typed at the shell prompt would trash the
+  // still-selected file, and ⌘A/⌘C/⌘V would be stolen from the terminal.
+  if (!panel.contains(document.activeElement)) return;
 
   const paths = [...fileSelection];
   if (primaryModifier(event) && !event.shiftKey && event.code === 'KeyA') {

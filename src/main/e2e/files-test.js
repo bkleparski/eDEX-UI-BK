@@ -81,6 +81,26 @@ function runFilesTest(window, context) {
               await new Promise((r) => setTimeout(r, 200));
               evidence.filterCleared = rows().length > 1;
 
+              // 7b. selection shortcuts only fire while FILES has focus: Backspace
+              // typed into the terminal must not trash the still-selected file,
+              // the same key with focus in the list must.
+              const pressBackspace = (target) => target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
+              click(rowFor('gamma.log'));
+              const terminalInput = document.querySelector('.xterm-helper-textarea');
+              terminalInput.focus();
+              const keyboardTrashBefore = Number(document.body.dataset.fileTrashCount) || 0;
+              pressBackspace(terminalInput);
+              await new Promise((r) => setTimeout(r, 600));
+              evidence.backspaceInTerminalKeepsFile = (Number(document.body.dataset.fileTrashCount) || 0) === keyboardTrashBefore
+                && Boolean(rowFor('gamma.log'));
+              const fileList = document.getElementById('fileList');
+              fileList.focus();
+              pressBackspace(fileList);
+              await new Promise((r) => setTimeout(r, 900));
+              window.__edexBrowse(root);
+              await new Promise((r) => setTimeout(r, 900));
+              evidence.backspaceInFilesTrashes = !rowFor('gamma.log');
+
               // 8. trash removes the selection
               click(rowFor('beta.txt'));
               await window.filesApi.trash([root + '/beta.txt']);
