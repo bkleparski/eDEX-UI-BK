@@ -357,7 +357,8 @@ npm run web
 ```
 
 Prints a URL with a token on stdout — `http://127.0.0.1:3040/?token=…` — open it in a browser.
-Set `EDEX_WEB_TOKEN` yourself to pin it instead of getting a random one every run; `EDEX_WEB_PORT`
+Set `EDEX_WEB_TOKEN` yourself to pin it instead of getting a random one every run (at least 32
+characters, e.g. `openssl rand -hex 32` — the server refuses shorter or placeholder values); `EDEX_WEB_PORT`
 (default `3040`) and `EDEX_WEB_BIND` (default `127.0.0.1`) are also overridable.
 
 **Run it in Docker** (the way to run it headless — a VPS, a container, anywhere without a
@@ -370,9 +371,9 @@ docker compose logs   # same URL, for the token you just set
 
 `docker-compose.yml` publishes `127.0.0.1:3040` on the host — loopback only, matching the
 bare-metal default — and keeps settings/custom themes in a named volume across restarts (same
-shape as `userData` above, mounted at `/data` instead). **Always set `EDEX_WEB_TOKEN` yourself
-when using Compose** — unlike running the server directly, its default falls back to the literal
-placeholder string committed in `docker-compose.yml`, not a randomly generated one.
+shape as `userData` above, mounted at `/data` instead). `EDEX_WEB_TOKEN` is **required**
+with Compose — `docker compose up` stops with an error when it is unset, rather than starting with
+a shared, publicly known default.
 
 > **The token is a shell on whatever machine is running the server.** Anyone who has it can run
 > arbitrary commands as that user, read, write or permanently delete any file it can reach, and

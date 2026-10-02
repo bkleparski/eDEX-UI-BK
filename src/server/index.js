@@ -45,7 +45,25 @@ const NODE_MODULES_ROOT = path.join(PROJECT_ROOT, 'node_modules');
 // host's point of view.
 const HOST = process.env.EDEX_WEB_BIND || '127.0.0.1';
 const PORT = Number.parseInt(process.env.EDEX_WEB_PORT, 10) || 3040;
-const TOKEN = process.env.EDEX_WEB_TOKEN || crypto.randomUUID();
+const MIN_PINNED_TOKEN_LENGTH = 32;
+// A pinned token is a shell credential. Refuse the obvious ways it ends up
+// guessable: too short, or a placeholder copied verbatim out of an example
+// (the old docker-compose.yml shipped `change-me-to-a-real-secret` as a
+// fallback, which made every unconfigured install share one public token).
+function pinnedTokenProblem(token) {
+  if (token.length < MIN_PINNED_TOKEN_LENGTH) return `shorter than ${MIN_PINNED_TOKEN_LENGTH} characters`;
+  if (/change-?me|placeholder|example|secret/i.test(token)) return 'a placeholder value';
+  return null;
+}
+const PINNED_TOKEN = process.env.EDEX_WEB_TOKEN;
+if (PINNED_TOKEN) {
+  const problem = pinnedTokenProblem(PINNED_TOKEN);
+  if (problem) {
+    console.error(`EDEX_WEB_TOKEN is ${problem}. Use a random secret, e.g. \`openssl rand -hex 32\`, or unset it to get a generated one.`);
+    process.exit(1);
+  }
+}
+const TOKEN = PINNED_TOKEN || crypto.randomUUID();
 const SHELL = process.env.EDEX_WEB_SHELL || defaultShell();
 const TOKEN_COOKIE = 'edex_web_token';
 const TERMINAL_METADATA_INTERVAL_MS = 500;

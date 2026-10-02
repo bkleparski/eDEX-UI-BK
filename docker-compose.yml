@@ -5,11 +5,11 @@
 # meant to go through something already sitting in front of this host
 # (Cloudflare Tunnel, an SSH tunnel), never a directly published port.
 #
-# Before first run, replace EDEX_WEB_TOKEN below with a real secret
-# (`openssl rand -hex 32` or similar) — anyone with this token gets a shell
-# on the host. Leaving it unset instead makes the server generate one itself
-# and print it on startup (`docker compose logs`), which works too and never
-# ends up committed anywhere.
+# EDEX_WEB_TOKEN is required — anyone with this token gets a shell in the
+# container. Export a real secret before the first run:
+#   EDEX_WEB_TOKEN=$(openssl rand -hex 32) docker compose up -d --build
+# Compose refuses to start without it (`:?` below) instead of falling back to
+# a placeholder that would be the same, publicly known value on every install.
 services:
   edex-ui-web:
     build: .
@@ -17,7 +17,7 @@ services:
     ports:
       - "127.0.0.1:3040:3040"
     environment:
-      EDEX_WEB_TOKEN: "${EDEX_WEB_TOKEN:-change-me-to-a-real-secret}"
+      EDEX_WEB_TOKEN: "${EDEX_WEB_TOKEN:?set EDEX_WEB_TOKEN to a real secret, e.g. openssl rand -hex 32}"
       # EDEX_WEB_BIND and EDEX_WEB_DATA already default correctly inside the
       # image (see Dockerfile) — spelled out here only as documentation of
       # what's tunable. EDEX_WEB_SHELL: "/bin/bash" would force a shell
