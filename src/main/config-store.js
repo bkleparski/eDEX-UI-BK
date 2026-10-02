@@ -57,7 +57,14 @@ function normalizeConfig(input) {
   }
   const config = structuredClone(defaults);
   for (const key of SECRET_KEYS) config.secrets[key] = cleanString(input.secrets?.[key], 4_096);
-  config.endpoints.hermesUrl = normalizeHermesUrl(input.endpoints?.hermesUrl ?? '');
+  // A bad stored URL (hand-edited file) only drops Hermes back to
+  // unconfigured — it must not make the whole config, with every other
+  // provider's key, fail to load.
+  try {
+    config.endpoints.hermesUrl = normalizeHermesUrl(input.endpoints?.hermesUrl ?? '');
+  } catch {
+    config.endpoints.hermesUrl = '';
+  }
   const localProvider = input.selection?.localProvider;
   if (LOCAL_PROVIDERS.has(localProvider)) config.selection.localProvider = localProvider;
   const hudProvider = input.selection?.hudProvider;

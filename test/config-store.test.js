@@ -78,3 +78,10 @@ test('Hermes URL validation rejects credentials, invalid protocols, malformed an
   }
   assert.equal(store.update({ endpoints: { hermesUrl: 'http://100.64.0.1:8642/' } }).endpoints.hermesUrl, 'http://100.64.0.1:8642');
 });
+
+test('an invalid stored Hermes URL does not break loading the rest of the config', () => {
+  const { normalizeConfig } = require('../src/main/config-store');
+  const config = normalizeConfig({ secrets: { openRouterApiKey: 'kept' }, endpoints: { hermesUrl: 'ftp://nope' } });
+  assert.equal(config.endpoints.hermesUrl, '');
+  assert.equal(config.secrets.openRouterApiKey, 'kept');
+});
