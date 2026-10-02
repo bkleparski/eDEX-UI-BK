@@ -192,7 +192,10 @@ class OpenCodeGoProvider {
       if (event.type === 'response.completed') completed = event.response;
       if (event.type === 'response.failed') throw new AssistantError('STREAM_ERROR', event.response?.error?.message || 'OpenCode Go response failed.', { provider: this.id });
     }
-    const result = parseResponsesResult(completed || { output: [] });
+    if (!completed) {
+      throw new AssistantError('STREAM_INCOMPLETE', 'OpenCode Go stream ended before response.completed.', { provider: this.id });
+    }
+    const result = parseResponsesResult(completed);
     if (!result.content && content) result.content = content;
     return result;
   }
@@ -214,7 +217,9 @@ class OpenCodeGoProvider {
     let finishReason = null;
     let usage = null;
     const calls = new Map();
+    let stopped = false;
     for await (const event of parseSse(response.body)) {
+      if (event.type === 'message_stop') stopped = true;
       if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
         calls.set(event.index, { id: event.content_block.id, name: event.content_block.name, arguments: '' });
       } else if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
@@ -229,6 +234,9 @@ class OpenCodeGoProvider {
       } else if (event.type === 'error') {
         throw new AssistantError('STREAM_ERROR', event.error?.message || 'OpenCode Go message failed.', { provider: this.id });
       }
+    }
+    if (!stopped && !finishReason) {
+      throw new AssistantError('STREAM_INCOMPLETE', 'OpenCode Go stream ended before message_stop.', { provider: this.id });
     }
     return {
       role: 'assistant', content,

@@ -114,7 +114,8 @@ class OpenAICompatibleClient {
     let usage = null;
     let finishReason = null;
     const calls = new Map();
-    for await (const event of parseSse(response.body)) {
+    let sawDone = false;
+    for await (const event of parseSse(response.body, { onDone: () => { sawDone = true; } })) {
       if (event?.error) throw new AssistantError('STREAM_ERROR', event.error.message || `${this.provider} stream failed.`, { provider: this.provider, details: event.error });
       if (event?.usage) usage = event.usage;
       const choice = event?.choices?.[0];
@@ -133,6 +134,12 @@ class OpenAICompatibleClient {
         current.arguments += call.function?.arguments || '';
         calls.set(key, current);
       }
+    }
+    // A body that just ends — no finish_reason, no [DONE] — was cut off by the
+    // provider or a proxy; reporting it as a normal answer would store the
+    // truncated text in the conversation as if it were complete.
+    if (!finishReason && !sawDone) {
+      throw new AssistantError('STREAM_INCOMPLETE', `${this.provider} stream ended before the response was complete.`, { provider: this.provider });
     }
     const toolCalls = [...calls.values()].map((call, index) => ({
       id: call.id || `tool-call-${index + 1}`,

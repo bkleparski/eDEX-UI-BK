@@ -91,6 +91,9 @@ class OllamaProvider {
     let content = '';
     const calls = [];
     for await (const event of parseNdjson(response.body)) {
+      if (event?.error) {
+        throw new AssistantError('STREAM_ERROR', String(event.error), { provider: this.id });
+      }
       final = event;
       const delta = event?.message?.content;
       if (typeof delta === 'string' && delta) {
@@ -98,6 +101,9 @@ class OllamaProvider {
         onEvent({ type: 'text-delta', text: delta });
       }
       if (Array.isArray(event?.message?.tool_calls)) calls.push(...event.message.tool_calls);
+    }
+    if (final?.done !== true) {
+      throw new AssistantError('STREAM_INCOMPLETE', 'Ollama stream ended before the response was complete.', { provider: this.id });
     }
     const parsed = parseOllamaMessage({ ...(final || {}), message: { ...(final?.message || {}), content, tool_calls: calls } });
     return parsed;
