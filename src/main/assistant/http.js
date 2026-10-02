@@ -143,15 +143,23 @@ async function* textChunks(body) {
   if (!body?.getReader) throw new AssistantError('INVALID_RESPONSE', 'Response body is not streamable.');
   const reader = body.getReader();
   const decoder = new TextDecoder();
+  let exhausted = false;
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        exhausted = true;
+        break;
+      }
       yield decoder.decode(value, { stream: true });
     }
     const tail = decoder.decode();
     if (tail) yield tail;
   } finally {
+    // A consumer that stops early (stream error event, bad JSON, a throwing
+    // onEvent) must release the connection now, not when the idle timeout
+    // in guardBody eventually notices nobody is reading.
+    if (!exhausted) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

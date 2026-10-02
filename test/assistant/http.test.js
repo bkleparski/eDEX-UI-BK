@@ -127,3 +127,39 @@ test('Ollama stream without done:true is incomplete, an error line is a stream e
     (error) => error.code === 'STREAM_ERROR' && error.message === 'model unloaded'
   );
 });
+
+test('a provider error mid-stream cancels the body right away', async () => {
+  let cancelled = false;
+  const client = new OpenAICompatibleClient({
+    provider: 'test',
+    baseUrl: 'http://unused',
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"error":{"message":"boom"}}\n\n'));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    }))
+  });
+  await assert.rejects(
+    client.complete({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    (error) => error.code === 'STREAM_ERROR'
+  );
+  assert.equal(cancelled, true);
+});
+
+test('OpenCode Go reports response.incomplete with its reason', async () => {
+  const { OpenCodeGoProvider } = require('../../src/main/assistant/opencode-go-provider');
+  const provider = new OpenCodeGoProvider({
+    apiKey: 'key',
+    fetchImpl: async () => chunkedResponse([
+      'data: {"type":"response.output_text.delta","delta":"Hal"}\n\n',
+      'data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}\n\n'
+    ])
+  });
+  await assert.rejects(
+    provider.completeResponses({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    (error) => error.code === 'RESPONSE_INCOMPLETE' && error.message.includes('max_output_tokens')
+  );
+});

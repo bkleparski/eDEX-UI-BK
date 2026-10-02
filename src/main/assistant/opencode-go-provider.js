@@ -190,6 +190,12 @@ class OpenCodeGoProvider {
         onEvent({ type: 'text-delta', text: event.delta });
       }
       if (event.type === 'response.completed') completed = event.response;
+      // A deliberate stop (e.g. max_output_tokens) is a finished response, not
+      // a dropped connection — report the provider's reason, not STREAM_INCOMPLETE.
+      if (event.type === 'response.incomplete') {
+        const reason = event.response?.incomplete_details?.reason || 'unknown reason';
+        throw new AssistantError('RESPONSE_INCOMPLETE', `OpenCode Go stopped the response early: ${reason}.`, { provider: this.id, details: event.response?.incomplete_details || null });
+      }
       if (event.type === 'response.failed') throw new AssistantError('STREAM_ERROR', event.response?.error?.message || 'OpenCode Go response failed.', { provider: this.id });
     }
     if (!completed) {

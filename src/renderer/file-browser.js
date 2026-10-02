@@ -1149,7 +1149,7 @@ function handleFileBrowserKeydown(event) {
     openFileFilter();
     return;
   }
-  if (primaryModifier(event) && event.shiftKey && event.code === 'KeyN') {
+  if (primaryModifier(event) && event.shiftKey && event.code === 'KeyN' && panel.contains(document.activeElement)) {
     event.preventDefault();
     event.stopPropagation();
     const parent = currentDirectoryPath();
