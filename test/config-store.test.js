@@ -30,7 +30,8 @@ test('ConfigStore writes secrets atomically with owner-only permissions and neve
   assert.deepEqual(visible.credentials, {
     braveConfigured: true,
     openRouterConfigured: true,
-    openCodeGoConfigured: true
+    openCodeGoConfigured: true,
+    hermesConfigured: false
   });
   assert.equal(JSON.stringify(visible).includes('secret'), false);
   const filePath = path.join(directory, 'config.json');
@@ -47,4 +48,33 @@ test('ConfigStore rejects unknown providers and schema versions', (t) => {
   assert.throws(() => store.update({ selection: { hudProvider: 'remote-anything' } }), /Invalid HUD provider/);
   fs.writeFileSync(path.join(directory, 'config.json'), '{"version":99}\n');
   assert.throws(() => new ConfigStore(directory).get(), /Unsupported config version/);
+});
+
+test('Hermes URL/key settings migrate old configs and never expose the key', (t) => {
+  const directory = temporaryDirectory(t);
+  fs.writeFileSync(path.join(directory, 'config.json'), JSON.stringify({ version: 1,
+    secrets: { openRouterApiKey: 'existing' }, selection: { hudProvider: 'openrouter' } }));
+  const store = new ConfigStore(directory);
+  assert.equal(store.get().endpoints.hermesUrl, '');
+  assert.equal(store.get().selection.models.hermes, 'hermes-agent');
+  assert.equal(store.getPublic().credentials.hermesConfigured, false);
+  const visible = store.update({ secrets: { hermesApiKey: 'hidden-hermes-key' },
+    endpoints: { hermesUrl: ' https://hermes:8642/// ' }, selection: { hudProvider: 'hermes' } });
+  assert.equal(visible.endpoints.hermesUrl, 'https://hermes:8642');
+  assert.equal(visible.credentials.hermesConfigured, true);
+  assert.equal(JSON.stringify(visible).includes('hidden-hermes-key'), false);
+  assert.equal(new ConfigStore(directory).get().secrets.hermesApiKey, 'hidden-hermes-key');
+  assert.equal(store.get().secrets.openRouterApiKey, 'existing');
+  assert.equal(store.update({ secrets: { hermesApiKey: '' } }).credentials.hermesConfigured, false);
+  assert.equal(store.update({ endpoints: { hermesUrl: '' } }).endpoints.hermesUrl, '');
+});
+
+test('Hermes URL validation rejects credentials, invalid protocols, malformed and excessive URLs', (t) => {
+  const store = new ConfigStore(temporaryDirectory(t));
+  for (const url of ['ftp://hermes', 'file:///tmp/a', 'http://user:password@hermes', 'http://user@hermes',
+    'not a URL', 'http://', 'https://hermes/' + 'x'.repeat(300), 'http://hermes?token=secret', 'http://hermes#fragment', 123]) {
+    assert.throws(() => store.update({ endpoints: { hermesUrl: url } }), /Invalid Hermes URL/);
+    assert.equal(store.get().endpoints.hermesUrl, '');
+  }
+  assert.equal(store.update({ endpoints: { hermesUrl: 'http://100.64.0.1:8642/' } }).endpoints.hermesUrl, 'http://100.64.0.1:8642');
 });

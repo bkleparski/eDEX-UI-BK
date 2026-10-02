@@ -86,7 +86,7 @@ class OpenAICompatibleClient {
     }));
   }
 
-  async complete({ model, messages, tools = [], stream = false, signal, onEvent = () => {}, extra = {} }) {
+  async complete({ model, messages, tools = [], stream = false, signal, onEvent = () => {}, extra = {}, headers = {} }) {
     const payload = {
       model,
       messages: openAiMessages(messages),
@@ -100,14 +100,14 @@ class OpenAICompatibleClient {
     }
     if (!stream) {
       const data = await requestJson(this.provider, `${this.baseUrl}/chat/completions`, {
-        method: 'POST', headers: this.headers(), body: JSON.stringify(payload), signal,
+        method: 'POST', headers: { ...this.headers(), ...headers }, body: JSON.stringify(payload), signal,
         timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl
       });
       return parseChatMessage(this.provider, data);
     }
 
     const response = await request(this.provider, `${this.baseUrl}/chat/completions`, {
-      method: 'POST', headers: this.headers(), body: JSON.stringify(payload), signal,
+      method: 'POST', headers: { ...this.headers(), ...headers }, body: JSON.stringify(payload), signal,
       timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl
     });
     let content = '';

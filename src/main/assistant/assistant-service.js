@@ -67,6 +67,17 @@ class AssistantService {
     const conversationId = surface === 'hud'
       ? requireString(request?.conversationId || 'hud-default', 'conversation ID', { max: 120 })
       : null;
+    if (provider.agent === true) {
+      const emit = (event) => onEvent({ requestId, provider: providerId, model, ...event });
+      emit({ type: 'started', mode: 'chat', surface });
+      const response = await provider.complete({
+        model, messages: [{ role: 'user', content: prompt }], sessionId: `edex-${conversationId}`,
+        stream: true, signal, onEvent: emit
+      });
+      const result = { requestId, content: response.content, sources: [], usage: response.usage || null };
+      emit({ type: 'done', ...result });
+      return result;
+    }
     const conversation = conversationId ? this.conversations.get(conversationId, providerId, model) : null;
     const history = conversation ? conversation.messages.map((message) => structuredClone(message)) : [];
     const messages = [{ role: 'system', content: SYSTEM_MESSAGE }, ...history];

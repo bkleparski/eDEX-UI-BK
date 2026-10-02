@@ -4,7 +4,7 @@
   if (!window.assistantApi || !window.settingsApi) return;
 
   const assistantTestMode = new URLSearchParams(window.location.search).get('test') === 'assistant';
-  const CLOUD_PROVIDERS = new Set(['openrouter', 'opencode-go']);
+  const CLOUD_PROVIDERS = new Set(['openrouter', 'opencode-go', 'hermes']);
   const ASSISTANT_WIDTH_KEY = 'edex.assistant.width.v1';
   const ASSISTANT_DEFAULT_WIDTH = 390;
   const ASSISTANT_MIN_WIDTH = 300;
@@ -23,7 +23,8 @@
     ollama: 'OLLAMA',
     lmstudio: 'LM STUDIO',
     openrouter: 'OPENROUTER',
-    'opencode-go': 'OPENCODE GO'
+    'opencode-go': 'OPENCODE GO',
+    hermes: 'HERMES / AGENT'
   };
   const elements = Object.fromEntries([
     'assistantToggle', 'settingsToggle', 'assistantPanel', 'assistantClose', 'hudProvider', 'hudModel',
@@ -31,7 +32,7 @@
     'assistantPrompt', 'assistantSearchMode', 'assistantCancel', 'assistantSubmit', 'settingsDialog',
     'settingsClose', 'settingsSave', 'settingsStatus', 'localProvider', 'localModel', 'braveApiKey',
     'openRouterApiKey', 'openCodeGoApiKey', 'openRouterModel', 'openCodeGoModel', 'braveState',
-    'openRouterState', 'openCodeGoState', 'assistantResizer'
+    'openRouterState', 'openCodeGoState', 'hermesUrl', 'hermesApiKey', 'hermesModel', 'hermesState', 'assistantResizer'
   ].map((id) => [id, document.getElementById(id)]));
 
   const state = {
@@ -76,6 +77,7 @@
     if (!state.config) return false;
     if (provider === 'openrouter') return state.config.credentials.openRouterConfigured;
     if (provider === 'opencode-go') return state.config.credentials.openCodeGoConfigured;
+    if (provider === 'hermes') return state.config.credentials.hermesConfigured && Boolean(state.config.endpoints.hermesUrl);
     return true;
   }
 
@@ -111,7 +113,7 @@
 
   async function loadModels(provider, { select, selectedId, status = elements.settingsStatus } = {}) {
     if (!credentialAvailable(provider)) {
-      fillSelect(select, [], '', 'API KEY REQUIRED');
+      fillSelect(select, [], '', provider === 'hermes' ? 'URL + API KEY REQUIRED' : 'API KEY REQUIRED');
       return [];
     }
     select.disabled = true;
@@ -207,9 +209,11 @@
       state.config = await window.settingsApi.get();
       elements.localProvider.value = state.config.selection.localProvider;
       elements.hudProvider.value = state.config.selection.hudProvider;
+      elements.hermesUrl.value = state.config.endpoints.hermesUrl;
       setCredentialState(elements.braveState, state.config.credentials.braveConfigured);
       setCredentialState(elements.openRouterState, state.config.credentials.openRouterConfigured);
       setCredentialState(elements.openCodeGoState, state.config.credentials.openCodeGoConfigured);
+      setCredentialState(elements.hermesState, credentialAvailable('hermes'));
       await Promise.all([
         refreshLocalModels(),
         state.config.credentials.openRouterConfigured
@@ -218,6 +222,7 @@
         state.config.credentials.openCodeGoConfigured
           ? loadModels('opencode-go', { select: elements.openCodeGoModel, selectedId: state.config.selection.models['opencode-go'] })
           : Promise.resolve(fillSelect(elements.openCodeGoModel, [], '', 'API KEY REQUIRED')),
+        loadModels('hermes', { select: elements.hermesModel, selectedId: state.config.selection.models.hermes }),
         refreshHudModels({ persistFallback: false })
       ]);
       setStatus(elements.settingsStatus, 'CONFIG LOADED');
@@ -232,6 +237,7 @@
     if (elements.braveApiKey.value) secrets.braveApiKey = elements.braveApiKey.value;
     if (elements.openRouterApiKey.value) secrets.openRouterApiKey = elements.openRouterApiKey.value;
     if (elements.openCodeGoApiKey.value) secrets.openCodeGoApiKey = elements.openCodeGoApiKey.value;
+    if (elements.hermesApiKey.value) secrets.hermesApiKey = elements.hermesApiKey.value;
     return secrets;
   }
 
@@ -243,18 +249,24 @@
       if (elements.localModel.value) models[elements.localProvider.value] = elements.localModel.value;
       if (elements.openRouterModel.value) models.openrouter = elements.openRouterModel.value;
       if (elements.openCodeGoModel.value) models['opencode-go'] = elements.openCodeGoModel.value;
+      if (elements.hermesModel.value) models.hermes = elements.hermesModel.value;
       const secrets = secretPatch();
       state.config = await window.settingsApi.update({
         selection: { localProvider: elements.localProvider.value, models },
+        endpoints: { hermesUrl: elements.hermesUrl.value },
         ...(Object.keys(secrets).length ? { secrets } : {})
       });
       elements.braveApiKey.value = '';
       elements.openRouterApiKey.value = '';
       elements.openCodeGoApiKey.value = '';
+      elements.hermesApiKey.value = '';
+      elements.hermesUrl.value = state.config.endpoints.hermesUrl;
       setCredentialState(elements.braveState, state.config.credentials.braveConfigured);
       setCredentialState(elements.openRouterState, state.config.credentials.openRouterConfigured);
       setCredentialState(elements.openCodeGoState, state.config.credentials.openCodeGoConfigured);
+      setCredentialState(elements.hermesState, credentialAvailable('hermes'));
       setStatus(elements.settingsStatus, 'CONFIG SAVED');
+      await loadModels('hermes', { select: elements.hermesModel, selectedId: state.config.selection.models.hermes });
       await refreshHudModels();
     } catch (error) {
       setStatus(elements.settingsStatus, errorText(error), 'error');
@@ -263,13 +275,22 @@
     }
   }
 
+  function settingsProviderElements(provider) {
+    const prefix = { openrouter: 'openRouter', 'opencode-go': 'openCodeGo', hermes: 'hermes' }[provider];
+    return { input: elements[`${prefix}ApiKey`], key: `${prefix}ApiKey`,
+      select: elements[`${prefix}Model`], status: elements[`${prefix}State`] };
+  }
+
   async function persistTypedCredential(provider) {
-    const input = provider === 'openrouter' ? elements.openRouterApiKey : elements.openCodeGoApiKey;
-    if (!input.value) return;
-    const key = provider === 'openrouter' ? 'openRouterApiKey' : 'openCodeGoApiKey';
-    state.config = await window.settingsApi.update({ secrets: { [key]: input.value } });
+    const { input, key, status } = settingsProviderElements(provider);
+    const patch = {};
+    if (input.value) patch.secrets = { [key]: input.value };
+    if (provider === 'hermes') patch.endpoints = { hermesUrl: elements.hermesUrl.value };
+    if (!Object.keys(patch).length) return;
+    state.config = await window.settingsApi.update(patch);
     input.value = '';
-    setCredentialState(provider === 'openrouter' ? elements.openRouterState : elements.openCodeGoState, true);
+    if (provider === 'hermes') elements.hermesUrl.value = state.config.endpoints.hermesUrl;
+    setCredentialState(status, credentialAvailable(provider));
   }
 
   async function refreshSettingsProvider(provider) {
@@ -278,7 +299,7 @@
       if (provider === 'local') {
         await refreshLocalModels();
       } else {
-        const select = provider === 'openrouter' ? elements.openRouterModel : elements.openCodeGoModel;
+        const { select } = settingsProviderElements(provider);
         await loadModels(provider, { select, selectedId: state.config.selection.models[provider] });
       }
     } catch (error) {

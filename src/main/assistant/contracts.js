@@ -4,7 +4,8 @@ const PROVIDER_IDS = Object.freeze({
   OLLAMA: 'ollama',
   LM_STUDIO: 'lmstudio',
   OPENROUTER: 'openrouter',
-  OPENCODE_GO: 'opencode-go'
+  OPENCODE_GO: 'opencode-go',
+  HERMES: 'hermes'
 });
 
 const MESSAGE_ROLES = new Set(['system', 'user', 'assistant', 'tool']);

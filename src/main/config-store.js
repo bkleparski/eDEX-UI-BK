@@ -8,7 +8,7 @@ const CONFIG_VERSION = 1;
 const CONFIG_FILE_NAME = 'config.json';
 const PROVIDERS = new Set(Object.values(PROVIDER_IDS));
 const LOCAL_PROVIDERS = new Set([PROVIDER_IDS.OLLAMA, PROVIDER_IDS.LM_STUDIO]);
-const SECRET_KEYS = Object.freeze(['braveApiKey', 'openRouterApiKey', 'openCodeGoApiKey']);
+const SECRET_KEYS = Object.freeze(['braveApiKey', 'openRouterApiKey', 'openCodeGoApiKey', 'hermesApiKey']);
 
 function defaultConfig() {
   return {
@@ -16,8 +16,10 @@ function defaultConfig() {
     secrets: {
       braveApiKey: '',
       openRouterApiKey: '',
-      openCodeGoApiKey: ''
+      openCodeGoApiKey: '',
+      hermesApiKey: ''
     },
+    endpoints: { hermesUrl: '' },
     selection: {
       localProvider: PROVIDER_IDS.OLLAMA,
       hudProvider: PROVIDER_IDS.OLLAMA,
@@ -25,7 +27,8 @@ function defaultConfig() {
         [PROVIDER_IDS.OLLAMA]: 'gemma4:e4b',
         [PROVIDER_IDS.LM_STUDIO]: '',
         [PROVIDER_IDS.OPENROUTER]: '',
-        [PROVIDER_IDS.OPENCODE_GO]: ''
+        [PROVIDER_IDS.OPENCODE_GO]: '',
+        [PROVIDER_IDS.HERMES]: 'hermes-agent'
       }
     }
   };
@@ -33,6 +36,17 @@ function defaultConfig() {
 
 function cleanString(value, max = 512) {
   return typeof value === 'string' && value.length <= max ? value.trim() : '';
+}
+
+function normalizeHermesUrl(value) {
+  if (typeof value !== 'string' || value.length > 300) throw new TypeError('Invalid Hermes URL.');
+  const url = value.trim().replace(/\/+$/, '');
+  if (!url) return '';
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new TypeError('Invalid Hermes URL.'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password
+      || parsed.search || parsed.hash) throw new TypeError('Invalid Hermes URL.');
+  return url;
 }
 
 function normalizeConfig(input) {
@@ -43,6 +57,7 @@ function normalizeConfig(input) {
   }
   const config = structuredClone(defaults);
   for (const key of SECRET_KEYS) config.secrets[key] = cleanString(input.secrets?.[key], 4_096);
+  config.endpoints.hermesUrl = normalizeHermesUrl(input.endpoints?.hermesUrl ?? '');
   const localProvider = input.selection?.localProvider;
   if (LOCAL_PROVIDERS.has(localProvider)) config.selection.localProvider = localProvider;
   const hudProvider = input.selection?.hudProvider;
@@ -58,10 +73,12 @@ function publicConfig(config) {
   return {
     version: config.version,
     selection: structuredClone(config.selection),
+    endpoints: structuredClone(config.endpoints),
     credentials: {
       braveConfigured: Boolean(config.secrets.braveApiKey),
       openRouterConfigured: Boolean(config.secrets.openRouterApiKey),
-      openCodeGoConfigured: Boolean(config.secrets.openCodeGoApiKey)
+      openCodeGoConfigured: Boolean(config.secrets.openCodeGoApiKey),
+      hermesConfigured: Boolean(config.secrets.hermesApiKey)
     }
   };
 }
@@ -122,6 +139,9 @@ class ConfigStore {
         if (typeof value !== 'string' || value.length > 4_096) throw new TypeError('Invalid secret value.');
         next.secrets[key] = value.trim();
       }
+    }
+    if (patch.endpoints?.hermesUrl !== undefined) {
+      next.endpoints.hermesUrl = normalizeHermesUrl(patch.endpoints.hermesUrl);
     }
     this.config = normalizeConfig(next);
     this.save();

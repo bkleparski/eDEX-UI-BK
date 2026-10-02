@@ -294,6 +294,7 @@
               <option value="lmstudio">LM STUDIO / LOCAL</option>
               <option value="openrouter">OPENROUTER / CLOUD</option>
               <option value="opencode-go">OPENCODE GO / CLOUD</option>
+              <option value="hermes">HERMES / AGENT</option>
             </select>
             <label class="field-label hud-label" for="hudModel">MODEL</label>
             <select class="hud-select" id="hudModel"></select>
@@ -610,6 +611,24 @@
                 <button class="text-action hud-label" type="button" data-refresh-provider="opencode-go">REFRESH</button>
               </div>
               <span class="credential-state hud-label" id="openCodeGoState">NOT CONFIGURED</span>
+            </div>
+          </section>
+          <section class="settings-section">
+            <h3 class="hud-label">HERMES / AGENT</h3>
+            <div class="settings-grid">
+              <label class="field-label hud-label" for="hermesUrl">SERVER URL</label>
+              <input class="hud-input" id="hermesUrl" type="text" maxlength="300" autocomplete="off" placeholder="http://hermes:8642">
+              <label class="field-label hud-label" for="hermesApiKey">API KEY</label>
+              <div class="field-with-action">
+                <input class="hud-input" id="hermesApiKey" type="password" autocomplete="off" placeholder="UNCHANGED">
+                <button class="text-action hud-label" type="button" data-test-provider="hermes">TEST</button>
+              </div>
+              <label class="field-label hud-label" for="hermesModel">ACTIVE MODEL</label>
+              <div class="field-with-action">
+                <select class="hud-select" id="hermesModel"></select>
+                <button class="text-action hud-label" type="button" data-refresh-provider="hermes">REFRESH</button>
+              </div>
+              <span class="credential-state hud-label" id="hermesState">NOT CONFIGURED</span>
             </div>
           </section>
         </div>
